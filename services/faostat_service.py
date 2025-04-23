@@ -282,12 +282,13 @@ class FAOStatService:
             logger.error(f"Error fetching dataset '{dataset_code}': {str(e)}")
             return None, {}
     
-    def _clean_dataset(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _clean_dataset(self, df: pd.DataFrame, fill_missing: bool = False) -> pd.DataFrame:
         """
         Perform basic cleaning on a dataset.
         
         Args:
             df: Dataset DataFrame
+            fill_missing: Whether to fill missing values (default: False)
             
         Returns:
             Cleaned DataFrame
@@ -302,13 +303,15 @@ class FAOStatService:
         if 'Value' in df.columns:
             df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
         
-        # Fill NaN values in numeric columns with 0
-        numeric_cols = df.select_dtypes(include=['number']).columns
-        df[numeric_cols] = df[numeric_cols].fillna(0)
-        
-        # Fill NaN values in string columns with empty string
-        string_cols = df.select_dtypes(include=['object']).columns
-        df[string_cols] = df[string_cols].fillna('')
+        # Only fill missing values if explicitly requested
+        if fill_missing:
+            # Fill NaN values in numeric columns with 0
+            numeric_cols = df.select_dtypes(include=['number']).columns
+            df[numeric_cols] = df[numeric_cols].fillna(0)
+            
+            # Fill NaN values in string columns with empty string
+            string_cols = df.select_dtypes(include=['object']).columns
+            df[string_cols] = df[string_cols].fillna('')
         
         return df
     
