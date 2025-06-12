@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-def render():
+def show_dataset_browser():
     """Render the dataset browser page."""
     
     st.title("📊 Dataset Browser")

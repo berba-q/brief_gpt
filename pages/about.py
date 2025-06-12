@@ -9,7 +9,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-def render():
+def show_about_page():
     """Render the about page."""
     
     st.title("ℹ️ About FAOSTAT Analytics")

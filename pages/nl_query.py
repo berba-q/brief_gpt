@@ -15,7 +15,7 @@ from features.nl_query_engine import NaturalLanguageQueryEngine
 
 logger = logging.getLogger(__name__)
 
-def render():
+def show_nl_query_page():
     """Render the natural language query page."""
     
     st.title("💬 Natural Language Queries")

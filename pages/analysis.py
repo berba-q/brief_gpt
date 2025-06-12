@@ -16,7 +16,7 @@ from utils.data_processing import identify_top_bottom_performers
 
 logger = logging.getLogger(__name__)
 
-def render():
+def show_analysis_page():
     """Render the analysis page."""
     
     st.title("🔬 Data Analysis")

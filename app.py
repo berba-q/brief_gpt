@@ -33,10 +33,11 @@ try:
     
     # Import pages
     from pages.home import show_home_page
-    from pages.dataset_browser import render
-    from pages.analysis import render
-    from pages.thematic_templates import render
-    from pages.about import render
+    from pages.dataset_browser import show_dataset_browser
+    from pages.analysis import show_analysis_page
+    from pages.thematic_templates import show_template_preview
+    from pages.nl_query import show_nl_query_page
+    from pages.about import show_about_page
     
 except ImportError as e:
     st.error(f"Error importing modules: {str(e)}")
@@ -49,8 +50,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'Get Help': '#',
-        'Report a bug': '#',
+        'Get Help': 'https://github.com/your-repo/faostat-analytics',
+        'Report a bug': 'https://github.com/your-repo/faostat-analytics/issues',
         'About': """
         # FAOSTAT Analytics
         
@@ -187,20 +188,20 @@ def main():
             show_home_page()
         
         elif selected_page == "dataset_browser":
-            render()
+            show_dataset_browser()
         
         elif selected_page == "analysis":
-            render()
+            show_analysis_page()
         
         elif selected_page == "thematic_templates":
-            render()
-
+            show_thematic_templates_page()
+        
         elif selected_page == "nl_query":
-            render()
-
+            show_nl_query_page()
+        
         elif selected_page == "about":
-            render()
-
+            show_about_page()
+        
         else:
             st.error(f"Unknown page: {selected_page}")
     

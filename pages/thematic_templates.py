@@ -16,7 +16,7 @@ from features.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
 
-def render():
+def show_thematic_templates_page():
     """Render the thematic templates page."""
     
     st.title("📋 Thematic Analysis Templates")

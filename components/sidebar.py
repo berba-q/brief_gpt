@@ -74,6 +74,33 @@ def create_sidebar() -> str:
     
     return selected_page
 
+def _show_settings():
+    """Show application settings and configuration options."""
+    
+    st.subheader("⚙️ Settings")
+    
+    # OpenAI API Key
+    openai_key = st.text_input(
+        "OpenAI API Key",
+        value=st.session_state.get('openai_api_key', ''),
+        type="password",
+        help="Enter your OpenAI API key to enable AI features."
+    )
+    
+    if openai_key:
+        st.session_state.openai_api_key = openai_key
+    
+    # Thematic Templates
+    st.markdown("### Thematic Templates")
+    st.write("Available templates for thematic analysis:")
+    
+    for template_id, template_data in THEMATIC_TEMPLATES.items():
+        st.markdown(f"- **{template_data['name']}**: {template_data['description']}")
+    
+    # Save settings button
+    if st.button("💾 Save Settings", use_container_width=True):
+        st.success("Settings saved successfully!")
+
 def _show_quick_stats():
     """Show quick statistics about the application."""
     
@@ -120,6 +147,62 @@ def _show_current_dataset_info():
             year_min = int(df['Year'].min())
             year_max = int(df['Year'].max())
             st.write(f"📅 {year_min} - {year_max}")
+    
+def _show_system_status():
+    """Show system status and health."""
+    
+    st.subheader("🔧 System Status")
+    
+    # Service health checks
+    services = {}
+    
+    # FAOSTAT Service
+    if 'faostat_service' in st.session_state:
+        services["FAOSTAT API"] = {"status": "✅", "color": "green"}
+    else:
+        services["FAOSTAT API"] = {"status": "❌", "color": "red"}
+    
+    # OpenAI Service
+    if 'openai_service' in st.session_state and st.session_state.openai_service:
+        services["OpenAI API"] = {"status": "✅", "color": "green"}
+    else:
+        services["OpenAI API"] = {"status": "⚠️", "color": "orange"}
+    
+    # Template Manager
+    if 'template_manager' in st.session_state:
+        services["Templates"] = {"status": "✅", "color": "green"}
+    else:
+        services["Templates"] = {"status": "❌", "color": "red"}
+    
+    # NL Query Engine
+    if 'nl_engine' in st.session_state:
+        services["NL Queries"] = {"status": "✅", "color": "green"}
+    else:
+        services["NL Queries"] = {"status": "⚠️", "color": "orange"}
+    
+    # Display status
+    for service, info in services.items():
+        if info["color"] == "green":
+            st.success(f"{info['status']} {service}")
+        elif info["color"] == "orange":
+            st.warning(f"{info['status']} {service}")
+        else:
+            st.error(f"{info['status']} {service}")
+    
+    # Show current dataset if any
+    if 'current_dataset' in st.session_state and st.session_state.current_dataset:
+        st.info(f"📊 Current Dataset: {st.session_state.current_dataset}")
+    
+    # Show memory usage if available
+    try:
+        import psutil
+        memory_percent = psutil.virtual_memory().percent
+        if memory_percent > 80:
+            st.warning(f"🧠 Memory: {memory_percent:.1f}%")
+        else:
+            st.success(f"🧠 Memory: {memory_percent:.1f}%")
+    except ImportError:
+        pass
     
     # Clear dataset button
     if st.button("🗑️ Clear Dataset", use_container_width=True):
