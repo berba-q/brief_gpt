@@ -1,386 +1,436 @@
 """
-Dataset browser page for the FAOSTAT Analytics application.
+Dataset browser page for FAOSTAT Analytics Application.
 
-This module provides an interface for exploring available FAOSTAT datasets,
-previewing their contents, and selecting datasets for analysis.
+This module provides an interface for browsing and selecting FAOSTAT datasets
+with streamlined functionality that works with the updated FAOSTAT service.
 """
 
 import streamlit as st
 import pandas as pd
 import logging
-from typing import Dict, Any, Optional
+import traceback
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 def show_dataset_browser():
-    """Render the dataset browser page."""
+    """Main render function for the dataset browser page."""
     
     st.title("📊 Dataset Browser")
-    st.markdown("Explore and select from 200+ FAOSTAT datasets for analysis")
+    st.markdown("Explore and select FAOSTAT datasets for analysis")
     
-    # Check if FAOSTAT service is available
-    if not hasattr(st.session_state, 'faostat_service'):
-        st.error("❌ FAOSTAT service not available. Please restart the application.")
+    # Check FAOSTAT service availability
+    if not check_faostat_service():
         return
     
+    # Main dataset browser interface
+    show_main_browser_interface()
+
+def check_faostat_service() -> bool:
+    """Check if FAOSTAT service is available and working."""
+    
+    if 'faostat_service' not in st.session_state:
+        st.error("❌ **FAOSTAT Service Not Available**")
+        st.markdown("""
+        The FAOSTAT service is not initialized. This could be due to:
+        1. Service initialization failed during app startup
+        2. Network connectivity issues
+        3. Configuration problems
+        """)
+        
+        if st.button("🔄 Try to Reinitialize FAOSTAT Service"):
+            try_reinitialize_faostat_service()
+        
+        return False
+    
+    return True
+
+def try_reinitialize_faostat_service():
+    """Try to reinitialize the FAOSTAT service."""
+    
+    try:
+        from services.faostat_service import FAOStatService
+        from config.config_manager import ConfigManager
+        
+        st.info("🔄 Attempting to reinitialize FAOSTAT service...")
+        
+        # Get configuration
+        if 'config' in st.session_state:
+            config = st.session_state.config
+        else:
+            config = ConfigManager()
+            st.session_state.config = config
+        
+        # Create new FAOSTAT service
+        faostat_service = FAOStatService(
+            base_url=config.get_faostat_base_url(),
+            cache_duration=config.get_int('faostat.cache_duration', 3600)
+        )
+        
+        # Test the service
+        st.info("🧪 Testing service...")
+        datasets_df = faostat_service.get_available_datasets()
+        
+        if datasets_df is not None and not datasets_df.empty:
+            st.session_state.faostat_service = faostat_service
+            st.success(f"✅ FAOSTAT service reinitialized successfully! Found {len(datasets_df)} datasets")
+            st.rerun()
+        else:
+            st.error("❌ Service initialized but no datasets found")
+            
+    except Exception as e:
+        st.error(f"❌ Failed to reinitialize service: {str(e)}")
+        st.code(traceback.format_exc())
+
+def show_main_browser_interface():
+    """Show the main dataset browser interface."""
+    
+    st.subheader("📊 Available Datasets")
+    
+    # Get FAOSTAT service
     faostat_service = st.session_state.faostat_service
     
+    # Add debug toggle
+    debug_mode = st.sidebar.checkbox("🐛 Debug Mode", value=False, help="Show detailed debugging information")
+    
     # Load datasets
-    with st.spinner("Loading available datasets..."):
-        datasets_df = load_datasets(faostat_service)
-    
-    if datasets_df.empty:
-        st.error("❌ No datasets available. Please check your connection.")
-        return
-    
-    # Dataset filtering and search
-    filtered_df = render_dataset_filters(datasets_df)
-    
-    # Dataset list
-    render_dataset_list(filtered_df, faostat_service)
-    
-    # Dataset preview
-    if st.session_state.get('selected_dataset_code'):
-        render_dataset_preview(faostat_service)
-
-def load_datasets(faostat_service) -> pd.DataFrame:
-    """Load available datasets from FAOSTAT."""
     try:
-        return faostat_service.get_available_datasets()
+        with st.spinner("🔄 Loading available datasets..."):
+            datasets_df = load_datasets(faostat_service, debug_mode)
+        
+        if datasets_df is None or datasets_df.empty:
+            st.warning("⚠️ No datasets found")
+            show_dataset_troubleshooting()
+            return
+        
+        st.success(f"✅ Found {len(datasets_df)} datasets")
+        
+        # Convert DataFrame to list of dictionaries for easier handling
+        datasets_list = datasets_df.to_dict('records')
+        
+        # Dataset filtering and search
+        filtered_datasets = show_dataset_filters(datasets_list)
+        
+        # Dataset list/grid
+        show_dataset_list(filtered_datasets)
+        
     except Exception as e:
-        logger.error(f"Error loading datasets: {str(e)}")
-        st.error(f"Error loading datasets: {str(e)}")
-        return pd.DataFrame()
+        st.error(f"❌ Error loading datasets: {str(e)}")
+        if debug_mode:
+            st.code(traceback.format_exc())
+        
+        if st.button("🔄 Retry Loading Datasets"):
+            st.rerun()
 
-def render_dataset_filters(datasets_df: pd.DataFrame) -> pd.DataFrame:
-    """Render dataset filtering interface."""
+def load_datasets(faostat_service, debug_mode: bool = False) -> Optional[pd.DataFrame]:
+    """Load datasets using the updated FAOSTAT service."""
     
-    st.markdown("## 🔍 Find Datasets")
+    try:
+        if debug_mode:
+            st.write("**Debug: Loading datasets...**")
+            st.write(f"Service type: {type(faostat_service)}")
+        
+        # Call the service method (returns DataFrame)
+        datasets_df = faostat_service.get_available_datasets(force_refresh=False)
+        
+        if debug_mode:
+            st.write(f"Result type: {type(datasets_df)}")
+            if datasets_df is not None:
+                st.write(f"DataFrame shape: {datasets_df.shape}")
+                st.write(f"DataFrame columns: {list(datasets_df.columns)}")
+                if not datasets_df.empty:
+                    st.write("**Sample dataset:**")
+                    st.write(datasets_df.iloc[0].to_dict())
+        
+        return datasets_df
+        
+    except Exception as e:
+        st.error(f"Exception in load_datasets: {str(e)}")
+        if debug_mode:
+            st.code(traceback.format_exc())
+        return None
+
+def show_dataset_filters(datasets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Show dataset filtering options and return filtered datasets."""
     
-    col1, col2 = st.columns([2, 1])
+    st.subheader("🔍 Filter Datasets")
+    
+    col1, col2 = st.columns(2)
     
     with col1:
-        # Search by name or description
+        # Search by name/description
         search_term = st.text_input(
-            "🔎 Search datasets",
-            placeholder="e.g., production, trade, population, fertilizer...",
+            "🔍 Search datasets",
+            placeholder="Enter dataset name or description...",
             help="Search in dataset names and descriptions"
         )
     
     with col2:
-        # Sort options
-        sort_by = st.selectbox(
-            "Sort by",
-            options=["name", "last_updated", "code"],
-            format_func=lambda x: x.replace("_", " ").title()
+        # Category filter - extract categories from descriptions or codes
+        categories = set()
+        for dataset in datasets:
+            # Try to infer category from code or description
+            code = dataset.get('code', '')
+            if code:
+                if code.startswith('Q'):
+                    categories.add('Production')
+                elif code.startswith('T'):
+                    categories.add('Trade')
+                elif code.startswith('F'):
+                    categories.add('Food Security')
+                elif code.startswith('E'):
+                    categories.add('Environment')
+                elif code.startswith('R'):
+                    categories.add('Resources')
+                else:
+                    categories.add('Other')
+            else:
+                categories.add('Other')
+        
+        selected_category = st.selectbox(
+            "📂 Category",
+            options=["All"] + sorted(list(categories)),
+            help="Filter by dataset category"
         )
     
-    # Filter datasets based on search
-    filtered_df = datasets_df.copy()
+    # Apply filters
+    filtered_datasets = datasets
     
     if search_term:
-        mask = (
-            filtered_df['name'].str.contains(search_term, case=False, na=False) |
-            filtered_df['description'].str.contains(search_term, case=False, na=False) |
-            filtered_df['code'].str.contains(search_term, case=False, na=False)
-        )
-        filtered_df = filtered_df[mask]
+        search_lower = search_term.lower()
+        filtered_datasets = [
+            d for d in filtered_datasets 
+            if search_lower in d.get('name', '').lower() 
+            or search_lower in d.get('description', '').lower()
+            or search_lower in d.get('code', '').lower()
+        ]
     
-    # Sort datasets
-    if sort_by in filtered_df.columns:
-        filtered_df = filtered_df.sort_values(sort_by)
+    if selected_category != "All":
+        def get_category(dataset):
+            code = dataset.get('code', '')
+            if code.startswith('Q'):
+                return 'Production'
+            elif code.startswith('T'):
+                return 'Trade'
+            elif code.startswith('F'):
+                return 'Food Security'
+            elif code.startswith('E'):
+                return 'Environment'
+            elif code.startswith('R'):
+                return 'Resources'
+            else:
+                return 'Other'
+        
+        filtered_datasets = [
+            d for d in filtered_datasets 
+            if get_category(d) == selected_category
+        ]
     
-    # Show filter results
-    st.info(f"📊 Showing {len(filtered_df)} of {len(datasets_df)} datasets")
+    st.info(f"Showing {len(filtered_datasets)} of {len(datasets)} datasets")
     
-    return filtered_df
+    return filtered_datasets
 
-def render_dataset_list(datasets_df: pd.DataFrame, faostat_service) -> None:
-    """Render the list of available datasets."""
+def show_dataset_list(datasets: List[Dict[str, Any]]):
+    """Show the filtered dataset list."""
     
-    st.markdown("## 📋 Available Datasets")
+    st.subheader("📋 Dataset List")
     
-    if datasets_df.empty:
-        st.warning("No datasets match your search criteria.")
+    if not datasets:
+        st.info("No datasets match your filters")
         return
     
     # Pagination
-    datasets_per_page = 10
-    total_pages = (len(datasets_df) - 1) // datasets_per_page + 1
+    items_per_page = 10
+    total_pages = (len(datasets) - 1) // items_per_page + 1
     
     if total_pages > 1:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            page = st.selectbox(
-                "Page",
-                range(1, total_pages + 1),
-                format_func=lambda x: f"Page {x} of {total_pages}"
-            )
+        page = st.slider("Page", 1, total_pages, 1) - 1
+        start_idx = page * items_per_page
+        end_idx = start_idx + items_per_page
+        page_datasets = datasets[start_idx:end_idx]
     else:
-        page = 1
-    
-    # Calculate page range
-    start_idx = (page - 1) * datasets_per_page
-    end_idx = min(start_idx + datasets_per_page, len(datasets_df))
-    page_datasets = datasets_df.iloc[start_idx:end_idx]
+        page_datasets = datasets
     
     # Display datasets
-    for idx, row in page_datasets.iterrows():
-        render_dataset_card(row, faostat_service)
+    for i, dataset in enumerate(page_datasets):
+        with st.expander(f"📊 {dataset.get('code', 'N/A')} - {dataset.get('name', 'Unknown Dataset')}"):
+            show_dataset_details(dataset)
 
-def render_dataset_card(dataset_row: pd.Series, faostat_service) -> None:
-    """Render a single dataset card."""
+def show_dataset_details(dataset: Dict[str, Any]):
+    """Show detailed information about a dataset."""
     
-    with st.container():
-        # Create a bordered container
-        st.markdown("""
-        <style>
-        .dataset-card {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 1rem;
-            margin: 0.5rem 0;
-            background-color: #f8f9fa;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        col1, col2, col3 = st.columns([3, 1, 1])
-        
-        with col1:
-            st.markdown(f"### 📊 {dataset_row['name']}")
-            st.markdown(f"**Code:** `{dataset_row['code']}`")
-            st.markdown(f"**Description:** {dataset_row['description']}")
-            if dataset_row['last_updated']:
-                st.markdown(f"**Last Updated:** {dataset_row['last_updated']}")
-        
-        with col2:
-            # Preview button
-            if st.button(f"👀 Preview", key=f"preview_{dataset_row['code']}"):
-                st.session_state.selected_dataset_code = dataset_row['code']
-                st.session_state.selected_dataset_name = dataset_row['name']
-                st.rerun()
-        
-        with col3:
-            # Select for analysis button
-            if st.button(f"📈 Analyze", key=f"analyze_{dataset_row['code']}"):
-                st.session_state.current_dataset_code = dataset_row['code']
-                st.session_state.current_dataset_name = dataset_row['name']
-                st.session_state.selected_page = "Analysis"
-                st.success(f"✅ Selected: {dataset_row['name']}")
-                st.rerun()
-        
-        # Show if this is the currently selected dataset
-        if st.session_state.get('current_dataset_code') == dataset_row['code']:
-            st.success("🎯 Currently selected for analysis")
-        
-        st.markdown("---")
-
-def render_dataset_preview(faostat_service) -> None:
-    """Render dataset preview section."""
-    
-    dataset_code = st.session_state.selected_dataset_code
-    dataset_name = st.session_state.get('selected_dataset_name', dataset_code)
-    
-    st.markdown(f"## 👀 Dataset Preview: {dataset_name}")
-    st.markdown(f"**Code:** `{dataset_code}`")
-    
-    # Load preview data
-    with st.spinner(f"Loading preview for {dataset_code}..."):
-        try:
-            preview_df, metadata = faostat_service.get_dataset_preview(dataset_code, max_rows=50)
-            
-            if preview_df is not None and not preview_df.empty:
-                render_preview_content(preview_df, metadata, faostat_service)
-            else:
-                st.error("❌ Could not load dataset preview")
-                
-        except Exception as e:
-            logger.error(f"Error loading preview for {dataset_code}: {str(e)}")
-            st.error(f"Error loading preview: {str(e)}")
-
-def render_preview_content(preview_df: pd.DataFrame, metadata: Dict, faostat_service) -> None:
-    """Render the preview content for a dataset."""
-    
-    # Dataset summary statistics
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.metric("Rows (Preview)", len(preview_df))
+        st.markdown(f"**Description:** {dataset.get('description', 'No description available')}")
+        st.markdown(f"**Code:** `{dataset.get('code', 'N/A')}`")
+        st.markdown(f"**Last Updated:** {dataset.get('last_updated', 'Unknown')}")
+        
+        # Show category
+        code = dataset.get('code', '')
+        category = get_dataset_category(code)
+        st.markdown(f"**Category:** {category}")
     
     with col2:
-        st.metric("Columns", len(preview_df.columns))
-    
-    with col3:
-        if 'Area' in preview_df.columns:
-            st.metric("Countries/Areas", preview_df['Area'].nunique())
-        else:
-            st.metric("Countries/Areas", "N/A")
-    
-    with col4:
-        if 'Year' in preview_df.columns:
-            year_range = f"{preview_df['Year'].min()}-{preview_df['Year'].max()}"
-            st.metric("Year Range", year_range)
-        else:
-            st.metric("Year Range", "N/A")
-    
-    # Data preview tabs
-    tab1, tab2, tab3 = st.tabs(["📊 Data Preview", "📈 Column Analysis", "ℹ️ Metadata"])
-    
-    with tab1:
-        render_data_preview_tab(preview_df)
-    
-    with tab2:
-        render_column_analysis_tab(preview_df)
-    
-    with tab3:
-        render_metadata_tab(metadata, preview_df)
-
-def render_data_preview_tab(preview_df: pd.DataFrame) -> None:
-    """Render the data preview tab."""
-    
-    st.markdown("### Sample Data")
-    st.dataframe(preview_df, use_container_width=True)
-    
-    # Download option
-    if st.button("💾 Export Preview as CSV"):
-        csv = preview_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv,
-            file_name=f"faostat_preview_{st.session_state.selected_dataset_code}.csv",
-            mime="text/csv"
-        )
-
-def render_column_analysis_tab(preview_df: pd.DataFrame) -> None:
-    """Render the column analysis tab."""
-    
-    st.markdown("### Column Information")
-    
-    # Column summary
-    column_info = []
-    for col in preview_df.columns:
-        col_data = {
-            'Column': col,
-            'Type': str(preview_df[col].dtype),
-            'Non-null Count': preview_df[col].count(),
-            'Unique Values': preview_df[col].nunique(),
-            'Sample Values': ', '.join(str(x) for x in preview_df[col].dropna().unique()[:3])
-        }
-        column_info.append(col_data)
-    
-    column_df = pd.DataFrame(column_info)
-    st.dataframe(column_df, use_container_width=True)
-    
-    # Show unique values for categorical columns
-    categorical_columns = preview_df.select_dtypes(include=['object']).columns
-    
-    if len(categorical_columns) > 0:
-        st.markdown("### Categorical Columns Details")
+        st.markdown("**Actions:**")
         
-        selected_col = st.selectbox(
-            "Select column to explore",
-            options=categorical_columns
-        )
+        dataset_code = dataset.get('code')
         
-        if selected_col:
-            unique_values = preview_df[selected_col].value_counts()
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown(f"**Top values in {selected_col}:**")
-                st.dataframe(unique_values.head(10))
-            
-            with col2:
-                # Simple bar chart of top values
-                if len(unique_values) > 0:
-                    st.bar_chart(unique_values.head(10))
+        col1_action, col2_action = st.columns(2)
+        
+        with col1_action:
+            if st.button(f"👁️ Preview", key=f"preview_{dataset_code}", use_container_width=True):
+                preview_dataset(dataset)
+        
+        with col2_action:
+            if st.button(f"📥 Load", key=f"load_{dataset_code}", use_container_width=True):
+                load_selected_dataset(dataset)
 
-def render_metadata_tab(metadata: Dict, preview_df: pd.DataFrame) -> None:
-    """Render the metadata tab."""
+def get_dataset_category(code: str) -> str:
+    """Get dataset category based on code."""
+    if not code:
+        return 'Other'
     
-    st.markdown("### Dataset Metadata")
-    
-    if metadata:
-        # Display metadata in a structured way
-        for key, value in metadata.items():
-            if key != 'fileSize':  # Skip complex nested structures
-                st.text(f"{key}: {value}")
+    if code.startswith('Q'):
+        return 'Production & Quantities'
+    elif code.startswith('T'):
+        return 'Trade'
+    elif code.startswith('F'):
+        return 'Food Security'
+    elif code.startswith('E'):
+        return 'Environment'
+    elif code.startswith('R'):
+        return 'Resources'
+    elif code.startswith('P'):
+        return 'Prices'
+    elif code.startswith('I'):
+        return 'Indicators'
     else:
-        st.info("No metadata available for this dataset")
-    
-    # Generate summary statistics
-    st.markdown("### Summary Statistics")
-    
-    if not preview_df.empty:
-        # Generate comprehensive summary
-        summary_stats = generate_summary_statistics(preview_df)
-        
-        for section, stats in summary_stats.items():
-            st.markdown(f"**{section}:**")
-            for stat_name, stat_value in stats.items():
-                st.text(f"  {stat_name}: {stat_value}")
+        return 'Other'
 
-def generate_summary_statistics(df: pd.DataFrame) -> Dict[str, Dict]:
-    """Generate comprehensive summary statistics for the dataset."""
+def preview_dataset(dataset: Dict[str, Any]):
+    """Preview a dataset without fully loading it."""
     
-    stats = {}
+    dataset_code = dataset.get('code')
+    st.info(f"🔍 Previewing dataset: {dataset_code}")
     
-    # Basic information
-    stats['Basic Information'] = {
-        'Total Rows': len(df),
-        'Total Columns': len(df.columns),
-        'Memory Usage': f"{df.memory_usage(deep=True).sum() / 1024:.1f} KB"
-    }
+    try:
+        faostat_service = st.session_state.faostat_service
+        
+        # Get a preview
+        with st.spinner("Loading preview..."):
+            df, metadata = faostat_service.get_dataset_preview(dataset_code, max_rows=50)
+        
+        if df is not None and not df.empty:
+            st.success(f"✅ Preview loaded: {len(df)} sample rows")
+            
+            # FIXED: Show basic info without nested columns - use metrics in a single row
+            st.markdown("### 📊 Dataset Overview")
+            
+            # Create metrics safely without nested columns
+            metrics_data = {
+                "Sample Rows": len(df),
+                "Columns": len(df.columns),
+                "Year Range": f"{df['Year'].min()}-{df['Year'].max()}" if 'Year' in df.columns else "N/A"
+            }
+            
+            # Display metrics as text instead of columns to avoid nesting
+            for label, value in metrics_data.items():
+                st.text(f"{label}: {value}")
+            
+            # Show column info
+            st.markdown("### 📋 Dataset Structure")
+            st.write("**Columns:**", ", ".join(df.columns.tolist()))
+            
+            # Show sample data
+            st.markdown("### 📄 Sample Data")
+            st.dataframe(df.head(10), use_container_width=True)
+            
+        else:
+            st.error("❌ Could not load preview data")
+            
+    except Exception as e:
+        st.error(f"❌ Preview failed: {str(e)}")
+        logger.error(f"Preview error for {dataset_code}: {str(e)}")
+
+def load_selected_dataset(dataset: Dict[str, Any]):
+    """Load the selected dataset into session state."""
     
-    # Column type breakdown
-    type_counts = df.dtypes.value_counts()
-    stats['Column Types'] = {str(dtype): count for dtype, count in type_counts.items()}
+    dataset_code = dataset.get('code')
+    dataset_name = dataset.get('name', 'Unknown Dataset')
     
-    # Missing data information
-    missing_data = df.isnull().sum()
-    missing_data = missing_data[missing_data > 0]
-    if len(missing_data) > 0:
-        stats['Missing Data'] = {col: f"{count} ({count/len(df)*100:.1f}%)" 
-                               for col, count in missing_data.items()}
+    st.info(f"📥 Loading dataset: {dataset_name}")
     
-    # Numeric columns summary
-    numeric_cols = df.select_dtypes(include=['number']).columns
-    if len(numeric_cols) > 0:
-        stats['Numeric Columns'] = {
-            'Count': len(numeric_cols),
-            'Columns': ', '.join(numeric_cols)
-        }
+    try:
+        faostat_service = st.session_state.faostat_service
+        
+        with st.spinner("Loading full dataset..."):
+            df, metadata = faostat_service.get_dataset(dataset_code)
+        
+        if df is not None and not df.empty:
+            # Store in session state
+            st.session_state.current_dataset = dataset_code
+            st.session_state.current_dataset_df = df
+            st.session_state.current_dataset_metadata = metadata
+            st.session_state.current_dataset_name = dataset_name
+            
+            st.success(f"✅ Dataset loaded successfully!")
+            st.success(f"📊 {len(df):,} rows × {len(df.columns)} columns")
+            
+            # FIXED: Show basic stats without nested columns
+            st.markdown("### 📊 Dataset Summary")
+            
+            # Create summary safely without columns
+            summary_info = []
+            if 'Year' in df.columns:
+                summary_info.append(f"**Year Range:** {df['Year'].min()} - {df['Year'].max()}")
+            if 'Area' in df.columns:
+                summary_info.append(f"**Countries:** {df['Area'].nunique()}")
+            if 'Item' in df.columns:
+                summary_info.append(f"**Items:** {df['Item'].nunique()}")
+            
+            for info in summary_info:
+                st.markdown(info)
+            
+            # Show what to do next
+            st.info("💡 **Next Steps:** Use the sidebar navigation to go to Analysis or Natural Language Queries to start exploring your data!")
+            
+        else:
+            st.error("❌ Failed to load dataset - no data returned")
+            
+    except Exception as e:
+        st.error(f"❌ Loading failed: {str(e)}")
+        logger.error(f"Load error for {dataset_code}: {str(e)}")
+
+def show_dataset_troubleshooting():
+    """Show troubleshooting options when no datasets are found."""
     
-    # Categorical columns summary
-    categorical_cols = df.select_dtypes(include=['object']).columns
-    if len(categorical_cols) > 0:
-        stats['Categorical Columns'] = {
-            'Count': len(categorical_cols),
-            'Columns': ', '.join(categorical_cols)
-        }
+    st.markdown("### 🔧 Troubleshooting")
     
-    # Date/time information
-    if 'Year' in df.columns:
-        stats['Time Coverage'] = {
-            'Earliest Year': str(df['Year'].min()),
-            'Latest Year': str(df['Year'].max()),
-            'Year Count': str(df['Year'].nunique())
-        }
+    col1, col2 = st.columns(2)
     
-    # Geographic coverage
-    if 'Area' in df.columns:
-        stats['Geographic Coverage'] = {
-            'Countries/Areas': str(df['Area'].nunique()),
-            'Top 3 Areas': ', '.join(df['Area'].value_counts().head(3).index)
-        }
+    with col1:
+        if st.button("🔄 Force Refresh", use_container_width=True):
+            # Clear any cached data and retry
+            if hasattr(st.session_state.faostat_service, '_cache'):
+                st.session_state.faostat_service._cache.clear()
+            st.rerun()
     
-    # Item coverage
-    if 'Item' in df.columns:
-        stats['Item Coverage'] = {
-            'Total Items': str(df['Item'].nunique()),
-            'Top 3 Items': ', '.join(df['Item'].value_counts().head(3).index)
-        }
+    with col2:
+        if st.button("🔧 Reinitialize Service", use_container_width=True):
+            try_reinitialize_faostat_service()
     
-    return stats
+    st.markdown("""
+    **Common Issues:**
+    1. **Network Problems**: FAOSTAT servers might be temporarily unavailable
+    2. **API Changes**: The FAOSTAT API structure might have changed
+    3. **Cache Issues**: Cached data might be corrupted
+    
+    **Manual Test:**
+    Try visiting the FAOSTAT datasets URL directly: 
+    [https://bulks-faostat.fao.org/production/datasets_E.json](https://bulks-faostat.fao.org/production/datasets_E.json)
+    """)
+
+if __name__ == "__main__":
+    show_dataset_browser()
+    

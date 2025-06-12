@@ -152,22 +152,106 @@ class FAOStatService:
             response = self._make_request(url)
             
             # Parse the response
-            datasets = response.json()
+            response_data = response.json()
             
-            # Extract useful information
+            # FIXED: Handle the nested structure properly (based on debugger findings)
+            datasets = None
+            
+            if isinstance(response_data, dict) and "Datasets" in response_data:
+                datasets_container = response_data["Datasets"]
+                logger.info(f"Found Datasets container: {type(datasets_container)}")
+                
+                if isinstance(datasets_container, dict):
+                    if "Dataset" in datasets_container:
+                        # Standard case: datasets at ["Datasets"]["Dataset"]
+                        datasets = datasets_container["Dataset"]
+                        logger.info(f"Found datasets at ['Datasets']['Dataset']: {type(datasets)}, length: {len(datasets) if isinstance(datasets, list) else 'single'}")
+                    else:
+                        logger.warning("No 'Dataset' key found in Datasets container")
+                        logger.info(f"Available keys: {list(datasets_container.keys())}")
+                        return pd.DataFrame()
+                elif isinstance(datasets_container, list):
+                    # Direct list case
+                    datasets = datasets_container
+                    logger.info(f"Datasets container is direct list: {len(datasets)} items")
+            else:
+                logger.error("No 'Datasets' key found in response")
+                logger.info(f"Available keys: {list(response_data.keys()) if isinstance(response_data, dict) else 'Not a dict'}")
+                return pd.DataFrame()
+            
+            if datasets is None:
+                logger.error("Could not find datasets in response")
+                return pd.DataFrame()
+            
+            # Normalize to list format
+            if isinstance(datasets, dict):
+                # Single dataset - convert to list
+                logger.info("Single dataset found, converting to list")
+                datasets = [datasets]
+            elif isinstance(datasets, list):
+                # Multiple datasets - use as is
+                logger.info(f"Multiple datasets found: {len(datasets)} items")
+            else:
+                logger.error(f"Unexpected datasets type: {type(datasets)}")
+                return pd.DataFrame()
+            
+            # Extract useful information using correct field names
             datasets_info = []
-            for dataset in datasets:
-                if 'name' in dataset and 'dateUpdate' in dataset:
-                    datasets_info.append({
-                        'code': dataset.get('code', 'Unknown'),
-                        'name': dataset.get('name', 'Unknown'),
-                        'last_updated': dataset.get('dateUpdate', 'Unknown'),
-                        'description': dataset.get('description', 'No description available'),
-                        'metadata': dataset  # Store the full metadata for later use
-                    })
+            for i, dataset in enumerate(datasets):
+                try:
+                    if isinstance(dataset, dict):
+                        # Use the correct field names that FAOSTAT actually uses
+                        name = (dataset.get('DatasetName') or 
+                            dataset.get('name') or 
+                            dataset.get('Name') or 
+                            'Unknown')
+                        
+                        code = (dataset.get('DatasetCode') or 
+                            dataset.get('code') or 
+                            dataset.get('Code') or 
+                            f"dataset_{i}")
+                        
+                        date_updated = (dataset.get('DateUpdate') or 
+                                    dataset.get('dateUpdate') or 
+                                    dataset.get('last_updated') or 
+                                    'Unknown')
+                        
+                        description = (dataset.get('DatasetDescription') or 
+                                    dataset.get('description') or 
+                                    dataset.get('Topic') or
+                                    'No description available')
+                        
+                        # Only add if we have meaningful data
+                        if name != 'Unknown' and code != f"dataset_{i}":
+                            datasets_info.append({
+                                'code': code,
+                                'name': name,
+                                'last_updated': date_updated,
+                                'description': description,
+                                'metadata': dataset  # Store the full metadata for later use
+                            })
+                            logger.debug(f"Successfully processed dataset: {name} ({code})")
+                        else:
+                            logger.warning(f"Skipping dataset {i} with insufficient data")
+                            logger.debug(f"Dataset {i} keys: {list(dataset.keys())}")
+                            
+                except Exception as dataset_error:
+                    logger.error(f"Error processing dataset {i}: {str(dataset_error)}")
+                    continue
             
             # Convert to DataFrame
             df = pd.DataFrame(datasets_info)
+            
+            # Log the results
+            logger.info(f"Successfully processed {len(datasets_info)} out of {len(datasets)} datasets")
+            if len(datasets_info) > 0:
+                logger.info(f"Sample dataset names: {[d['name'] for d in datasets_info[:3]]}")
+            else:
+                logger.error("No datasets were successfully processed!")
+                # Log a sample for debugging
+                if len(datasets) > 0:
+                    sample_dataset = datasets[0]
+                    logger.error(f"Sample dataset keys: {list(sample_dataset.keys()) if isinstance(sample_dataset, dict) else type(sample_dataset)}")
             
             # Update the dataset lookup table
             self._update_dataset_lookup(df)
@@ -245,41 +329,169 @@ class FAOStatService:
                 return cached_data
         
         try:
-            # Get dataset metadata
-            metadata = self.get_dataset_metadata(dataset_code)
-            if not metadata:
+            # FIXED: Get dataset info directly from the lookup (no separate metadata call)
+            if not self._dataset_lookup:
+                self.get_available_datasets()
+            
+            if dataset_code not in self._dataset_lookup:
+                logger.error(f"Dataset '{dataset_code}' not found in available datasets")
                 return None, {}
             
-            # Look for CSV file information
-            csv_file_info = None
-            for file_info in metadata.get('fileSize', []):
-                if file_info.get('format', '').lower() == 'csv':
-                    csv_file_info = file_info
-                    break
+            dataset_info = self._dataset_lookup[dataset_code]
+            logger.info(f"Dataset info keys: {list(dataset_info.keys())}")
             
-            if not csv_file_info:
-                logger.error(f"CSV format not available for dataset '{dataset_code}'")
-                return None, metadata
+            # FIXED: Look for fileLocation directly in the dataset JSON response
+            download_url = None
+            is_zip_file = False
             
-            # Download the CSV file
-            file_url = f"{self.base_url}{csv_file_info.get('id')}"
-            logger.info(f"Downloading dataset {dataset_code} from {file_url}")
+            # Strategy 1: Look for fileLocation field (primary FAOSTAT pattern)
+            if 'fileLocation' in dataset_info and dataset_info['fileLocation']:
+                download_url = dataset_info['fileLocation']
+                # Ensure it's a full URL
+                if not download_url.startswith('http'):
+                    download_url = f"{self.base_url.rstrip('/')}/{download_url.lstrip('/')}"
+                
+                # FAOSTAT typically serves ZIP files
+                is_zip_file = download_url.endswith('.zip')
+                
+                logger.info(f"Found fileLocation: {download_url} (ZIP: {is_zip_file})")
             
-            response = self._make_request(file_url)
+            # Strategy 2: Look for other common FAOSTAT fields in the JSON response
+            elif any(field in dataset_info for field in ['downloadUrl', 'DownloadUrl', 'url', 'FileLocation']):
+                for field in ['downloadUrl', 'DownloadUrl', 'url', 'FileLocation']:
+                    if field in dataset_info and dataset_info[field]:
+                        download_url = dataset_info[field]
+                        if not download_url.startswith('http'):
+                            download_url = f"{self.base_url.rstrip('/')}/{download_url.lstrip('/')}"
+                        is_zip_file = download_url.endswith('.zip')
+                        logger.info(f"Found download URL in field '{field}': {download_url}")
+                        break
             
-            # Parse the CSV data
-            df = pd.read_csv(BytesIO(response.content), encoding='utf-8')
+            # Strategy 3: Construct URL based on dataset code (FAOSTAT bulk download pattern)
+            else:
+                # FAOSTAT bulk download patterns
+                possible_patterns = [
+                    f"{self.base_url.rstrip('/')}/{dataset_code}.zip",
+                    f"{self.base_url.rstrip('/')}/{dataset_code}_E.zip",  # English version
+                    f"{self.base_url.rstrip('/')}/bulk/{dataset_code}.zip"
+                ]
+                
+                for pattern_url in possible_patterns:
+                    try:
+                        # Test if this URL exists (HEAD request)
+                        test_response = requests.head(pattern_url, timeout=10)
+                        if test_response.status_code == 200:
+                            download_url = pattern_url
+                            is_zip_file = True
+                            logger.info(f"Found working ZIP pattern: {download_url}")
+                            break
+                    except:
+                        continue
+            
+            if not download_url:
+                logger.error(f"Could not find download URL for dataset '{dataset_code}'")
+                logger.error(f"Available dataset fields: {list(dataset_info.keys())}")
+                return None, dataset_info
+            
+            # Download and process the file
+            logger.info(f"Downloading dataset {dataset_code} from {download_url}")
+            response = self._make_request(download_url)
+            
+            # Handle ZIP files (FAOSTAT standard)
+            if is_zip_file:
+                logger.info("Processing ZIP file...")
+                
+                import zipfile
+                from io import BytesIO
+                
+                try:
+                    with zipfile.ZipFile(BytesIO(response.content)) as zip_file:
+                        # List files in the ZIP
+                        file_list = zip_file.namelist()
+                        logger.info(f"Files in ZIP: {file_list}")
+                        
+                        # Look for CSV file in the ZIP
+                        csv_files = [f for f in file_list if f.endswith('.csv')]
+                        
+                        if not csv_files:
+                            logger.error(f"No CSV files found in ZIP for dataset {dataset_code}")
+                            return None, dataset_info
+                        
+                        # Use the first CSV file (or the one that matches the dataset code)
+                        csv_filename = csv_files[0]
+                        for f in csv_files:
+                            if dataset_code.lower() in f.lower():
+                                csv_filename = f
+                                break
+                        
+                        logger.info(f"Extracting CSV file: {csv_filename}")
+                        
+                        # Extract and read the CSV
+                        with zip_file.open(csv_filename) as csv_file:
+                            csv_content = csv_file.read()
+                            
+                            # Try different encodings
+                            for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
+                                try:
+                                    df = pd.read_csv(BytesIO(csv_content), encoding=encoding)
+                                    logger.info(f"Successfully parsed CSV with {encoding} encoding")
+                                    break
+                                except UnicodeDecodeError:
+                                    continue
+                            else:
+                                logger.error("Could not parse CSV with any common encoding")
+                                return None, dataset_info
+                                
+                except zipfile.BadZipFile:
+                    logger.error(f"Downloaded file is not a valid ZIP file")
+                    return None, dataset_info
+                    
+            else:
+                # Handle direct CSV files
+                logger.info("Processing direct CSV file...")
+                
+                # Check if response is actually CSV
+                content_type = response.headers.get('content-type', '').lower()
+                if 'text/csv' not in content_type and 'application/csv' not in content_type:
+                    # Try to detect CSV by content
+                    content_sample = response.content[:1000].decode('utf-8', errors='ignore')
+                    if not (',' in content_sample or ';' in content_sample or '\t' in content_sample):
+                        logger.error(f"Response doesn't appear to be CSV. Content-Type: {content_type}")
+                        return None, dataset_info
+                
+                # Parse the CSV data with multiple encoding attempts
+                for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
+                    try:
+                        df = pd.read_csv(BytesIO(response.content), encoding=encoding)
+                        logger.info(f"Successfully parsed CSV with {encoding} encoding")
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    logger.error("Could not parse CSV with any common encoding")
+                    return None, dataset_info
+            
+            if df.empty:
+                logger.warning(f"Dataset {dataset_code} is empty")
+                return df, dataset_info
+            
+            logger.info(f"Successfully loaded dataset {dataset_code}: {df.shape[0]} rows, {df.shape[1]} columns")
+            logger.info(f"Columns: {list(df.columns)}")
             
             # Perform basic data cleaning
             df = self._clean_dataset(df)
             
             # Cache the result
-            self._set_in_cache(cache_key, (df, metadata))
+            self._set_in_cache(cache_key, (df, dataset_info))
             
-            return df, metadata
+            return df, dataset_info
             
+        except requests.RequestException as e:
+            logger.error(f"Network error fetching dataset '{dataset_code}': {str(e)}")
+            return None, {}
         except Exception as e:
             logger.error(f"Error fetching dataset '{dataset_code}': {str(e)}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return None, {}
     
     def _clean_dataset(self, df: pd.DataFrame, fill_missing: bool = False) -> pd.DataFrame:
