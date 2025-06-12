@@ -10,8 +10,8 @@ import pandas as pd
 import logging
 from typing import Dict, Any, Optional
 
-from components.query_interface import render_query_interface, render_advanced_query_options
-from features.nl_query_engine import NLQueryEngine
+from components.query_interface import show_query_interface
+from features.nl_query_engine import NaturalLanguageQueryEngine
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def render():
         return
     
     # Initialize query engine
-    query_engine = NLQueryEngine()
+    query_engine = NaturalLanguageQueryEngine()
     
     # Main interface
     render_main_interface(query_engine)
@@ -74,10 +74,7 @@ def render_main_interface(query_engine):
     render_dataset_context(current_dataset, current_dataset_name)
     
     # Query interface
-    render_query_interface(current_dataset, current_dataset_name)
-    
-    # Advanced options
-    render_advanced_query_options()
+    show_query_interface(current_dataset, current_dataset_name)
 
 def render_dataset_context(dataset_df: Optional[pd.DataFrame], dataset_name: str):
     """Render information about the current dataset context."""

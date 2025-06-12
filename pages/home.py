@@ -1,437 +1,337 @@
 """
-Home page for the FAOSTAT Analytics application.
+Home page for FAOSTAT Analytics Application.
 
-This module provides the main landing page with overview information,
-recent activity, and quick access to key features.
+This module provides the main landing page with overview, quick actions,
+and getting started information.
 """
 
 import streamlit as st
 import pandas as pd
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from datetime import datetime
+from typing import Dict, Any, Optional
 
-from config.constants import THEMATIC_TEMPLATES
-
-logger = logging.getLogger(__name__)
-
-def render():
-    """Render the home page."""
+def show_home_page():
+    """Display the home page with overview and quick actions."""
     
-    # Welcome section
-    render_welcome_section()
-    
-    # Quick start section
-    render_quick_start_section()
-    
-    # Recent activity
-    render_recent_activity()
-    
-    # System overview
-    render_system_overview()
-    
-    # Featured templates
-    render_featured_templates()
-
-def render_welcome_section():
-    """Render the welcome section with overview."""
-    
+    # Welcome header
     st.markdown("""
-    ## Welcome to FAOSTAT Analytics! 🌾
+    # 🌾 Welcome to FAOSTAT Analytics
     
-    Your comprehensive platform for analyzing Food and Agriculture Organization (FAO) statistical data 
-    and generating professional analytical briefs with AI-powered insights.
+    **Professional Agricultural Data Analysis Platform**
+    
+    Unlock insights from FAO's comprehensive agricultural database with AI-powered analytics,
+    natural language queries, and professional visualization tools.
     """)
     
-    # Key features overview
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        ### 📊 Data Analysis
-        - Access 200+ FAOSTAT datasets
-        - Interactive filtering and exploration
-        - Advanced statistical analysis
-        - Professional visualizations
-        """)
-    
-    with col2:
-        st.markdown("""
-        ### 🤖 AI Insights
-        - GPT-powered analysis
-        - Automated brief generation
-        - Natural language queries
-        - Expert-level interpretations
-        """)
-    
-    with col3:
-        st.markdown("""
-        ### 📄 Report Generation
-        - PDF and Word documents
-        - FAO-standard formatting
-        - Publication-ready output
-        - Customizable templates
-        """)
-
-def render_quick_start_section():
-    """Render quick start options."""
-    
-    st.markdown("## 🚀 Quick Start")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### New to FAOSTAT Analytics?")
-        
-        if st.button("🎯 Take the Tour", use_container_width=True):
-            st.session_state.selected_page = "About"
-            st.rerun()
-        
-        if st.button("📖 Browse Datasets", use_container_width=True):
-            st.session_state.selected_page = "Dataset Browser"
-            st.rerun()
-        
-        if st.button("🔬 Start Analysis", use_container_width=True):
-            st.session_state.selected_page = "Analysis"
-            st.rerun()
-    
-    with col2:
-        st.markdown("### Ready to analyze?")
-        
-        if st.button("📋 Use Template", use_container_width=True):
-            st.session_state.selected_page = "Thematic Templates"
-            st.rerun()
-        
-        if st.button("💬 Ask Questions", use_container_width=True):
-            st.session_state.selected_page = "Natural Language Query"
-            st.rerun()
-        
-        # API key status
-        openai_service = st.session_state.get('openai_service')
-        if openai_service:
-            st.success("✅ AI features enabled")
-        else:
-            st.warning("⚠️ Configure OpenAI API key in sidebar for AI features")
-
-def render_recent_activity():
-    """Render recent activity section."""
-    
-    st.markdown("## 📈 Recent Activity")
-    
-    # Check if we have any recent analysis
-    analysis_results = st.session_state.get('analysis_results')
-    current_dataset = st.session_state.get('current_dataset_code')
-    
-    if analysis_results or current_dataset:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if current_dataset:
-                st.markdown("### 📊 Current Dataset")
-                st.info(f"Working with: **{current_dataset}**")
-                
-                if st.button("🔄 Continue Analysis"):
-                    st.session_state.selected_page = "Analysis"
-                    st.rerun()
-        
-        with col2:
-            if analysis_results:
-                st.markdown("### 📋 Last Analysis")
-                st.success(f"Completed: **{analysis_results.dataset_name}**")
-                st.text(f"Generated: {analysis_results.generated_at.strftime('%Y-%m-%d %H:%M')}")
-                
-                if st.button("📄 View Results"):
-                    st.session_state.selected_page = "Analysis"
-                    st.rerun()
-    else:
-        st.info("No recent activity. Start by browsing datasets or selecting a template!")
-
-def render_system_overview():
-    """Render system status and capabilities overview."""
-    
-    st.markdown("## 🔧 System Status")
-    
-    # Service status metrics
+    # Quick stats row
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        faostat_status = "✅ Connected" if hasattr(st.session_state, 'faostat_service') else "❌ Unavailable"
-        st.metric("FAOSTAT API", faostat_status)
+        # Template count
+        template_count = 0
+        if 'template_manager' in st.session_state:
+            templates = st.session_state.template_manager.get_all_templates()
+            template_count = len(templates)
+        st.metric("📋 Templates", template_count)
     
     with col2:
-        ai_status = "✅ Enabled" if st.session_state.get('openai_service') else "❌ Disabled"
-        st.metric("AI Features", ai_status)
+        # Available datasets (placeholder)
+        st.metric("📊 Datasets", "200+")
     
     with col3:
-        pdf_status = "✅ Available" if (hasattr(st.session_state, 'pdf_service') and 
-                                      st.session_state.pdf_service.is_available()) else "❌ Unavailable"
-        st.metric("PDF Generation", pdf_status)
+        # Countries covered
+        st.metric("🌍 Countries", "245+")
     
     with col4:
-        viz_status = "✅ Ready" if hasattr(st.session_state, 'viz_generator') else "❌ Not Ready"
-        st.metric("Visualizations", viz_status)
+        # Years of data
+        st.metric("📅 Years", "1960-2023")
     
-    # Dataset statistics
-    if hasattr(st.session_state, 'faostat_service'):
-        with st.expander("📊 Available Datasets", expanded=False):
-            try:
-                datasets_df = st.session_state.faostat_service.get_available_datasets()
-                
-                if not datasets_df.empty:
-                    st.success(f"✅ {len(datasets_df)} datasets available")
-                    
-                    # Show some statistics
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Total Datasets", len(datasets_df))
-                    with col2:
-                        # Count recently updated datasets (last 2 years)
-                        current_year = datetime.now().year
-                        recent_datasets = datasets_df[
-                            datasets_df['last_updated'].str.contains(str(current_year-1) + '|' + str(current_year), na=False)
-                        ]
-                        st.metric("Recently Updated", len(recent_datasets))
-                    
-                    # Show top 5 datasets by name
-                    st.markdown("**Popular Datasets:**")
-                    popular_datasets = [
-                        "Crops and livestock products",
-                        "Food Balances",
-                        "Fertilizers by Nutrient",
-                        "Trade: Crops and Livestock Products",
-                        "Population"
-                    ]
-                    
-                    available_popular = datasets_df[
-                        datasets_df['name'].str.contains('|'.join(popular_datasets), case=False, na=False)
-                    ]['name'].head(5).tolist()
-                    
-                    for dataset in available_popular:
-                        st.text(f"• {dataset}")
-                        
-                else:
-                    st.warning("⚠️ No datasets loaded yet")
-                    if st.button("🔄 Load Datasets"):
-                        with st.spinner("Loading datasets..."):
-                            datasets_df = st.session_state.faostat_service.get_available_datasets(force_refresh=True)
-                        st.rerun()
-                        
-            except Exception as e:
-                st.error(f"Error loading dataset information: {str(e)}")
-                logger.error(f"Error in home page dataset loading: {str(e)}")
+    st.markdown("---")
+    
+    # Main content sections
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        show_getting_started()
+        show_recent_activity()
+    
+    with col2:
+        show_quick_actions()
+        show_system_status()
 
-def render_featured_templates():
-    """Render featured thematic templates."""
+def show_getting_started():
+    """Show getting started guide."""
     
-    st.markdown("## 📋 Featured Analysis Templates")
+    st.subheader("🚀 Getting Started")
+    
+    steps = [
+        {
+            "title": "1. Browse Datasets",
+            "description": "Explore available FAOSTAT datasets covering crops, livestock, trade, and more.",
+            "action": "dataset_browser",
+            "icon": "📊"
+        },
+        {
+            "title": "2. Configure AI Features",
+            "description": "Add your OpenAI API key to enable natural language queries and AI insights.",
+            "action": "config",
+            "icon": "🤖"
+        },
+        {
+            "title": "3. Start Analysis",
+            "description": "Use thematic templates or create custom analysis with our tools.",
+            "action": "analysis",
+            "icon": "🔬"
+        },
+        {
+            "title": "4. Ask Questions",
+            "description": "Query your data in natural language and get instant insights.",
+            "action": "nl_query",
+            "icon": "💬"
+        }
+    ]
+    
+    for step in steps:
+        with st.expander(f"{step['icon']} {step['title']}", expanded=False):
+            st.write(step["description"])
+            
+            if step["action"] == "config":
+                # Show API key status
+                if 'config' in st.session_state:
+                    api_key = st.session_state.config.get_openai_api_key()
+                    if api_key:
+                        st.success("✅ OpenAI API configured")
+                    else:
+                        st.warning("⚠️ OpenAI API key needed")
+                        st.write("Add your API key in the sidebar settings to unlock AI features.")
+            
+            elif step["action"] == "dataset_browser":
+                if st.button("🔍 Browse Datasets", key=f"btn_{step['action']}"):
+                    st.session_state.selected_page = "dataset_browser"
+                    st.rerun()
+            
+            elif step["action"] == "analysis":
+                if st.button("🔬 Start Analysis", key=f"btn_{step['action']}"):
+                    st.session_state.selected_page = "analysis"
+                    st.rerun()
+            
+            elif step["action"] == "nl_query":
+                if st.button("💬 Try Natural Language", key=f"btn_{step['action']}"):
+                    st.session_state.selected_page = "nl_query"
+                    st.rerun()
+
+def show_recent_activity():
+    """Show recent activity and bookmarks."""
+    
+    st.subheader("📝 Recent Activity")
+    
+    # Check for recent bookmarks
+    if 'template_manager' in st.session_state:
+        bookmarks = st.session_state.template_manager.get_all_bookmarks()
+        
+        if bookmarks:
+            st.write("**Recent Bookmarks:**")
+            # Show last 3 bookmarks
+            recent_bookmarks = list(bookmarks.items())[-3:]
+            
+            for bookmark_id, bookmark in recent_bookmarks:
+                with st.container():
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"📊 **{bookmark.name}**")
+                        st.caption(f"Dataset: {bookmark.dataset_name} | Created: {bookmark.created_at}")
+                    with col2:
+                        if st.button("Load", key=f"load_recent_{bookmark_id}"):
+                            st.info(f"Loading bookmark: {bookmark.name}")
+        else:
+            st.info("No recent activity yet. Start by exploring datasets or creating bookmarks!")
+    else:
+        st.info("Template manager not initialized")
+    
+    # Show query history if available
+    if 'query_history' in st.session_state and st.session_state.query_history:
+        st.write("**Recent Queries:**")
+        recent_queries = st.session_state.query_history[-3:]
+        
+        for i, query in enumerate(recent_queries):
+            st.write(f"💬 {query.get('query', 'Unknown query')}")
+            st.caption(f"Dataset: {query.get('dataset', 'Unknown')}")
+
+def show_quick_actions():
+    """Show quick action buttons."""
+    
+    st.subheader("⚡ Quick Actions")
+    
+    # Quick dataset access
+    if st.button("📊 Load Sample Dataset", use_container_width=True):
+        with st.spinner("Loading QCL (Crops & Livestock) dataset..."):
+            try:
+                if 'faostat_service' in st.session_state:
+                    df, metadata = st.session_state.faostat_service.get_dataset("QCL")
+                    if df is not None:
+                        st.session_state.current_dataset = "QCL"
+                        st.session_state.current_dataset_df = df.head(1000)  # Limit for demo
+                        st.success("✅ Sample dataset loaded!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to load dataset")
+                else:
+                    st.error("FAOSTAT service not available")
+            except Exception as e:
+                st.error(f"Error loading dataset: {str(e)}")
+    
+    # Quick template access
+    if st.button("📋 Food Security Template", use_container_width=True):
+        st.session_state.selected_template = "food_security"
+        st.session_state.selected_page = "thematic_templates"
+        st.rerun()
+    
+    # Quick query
+    if st.button("💬 Try Sample Query", use_container_width=True):
+        if 'nl_engine' in st.session_state:
+            st.session_state.sample_query = "What are the top 5 rice producing countries?"
+            st.session_state.selected_page = "nl_query"
+            st.rerun()
+        else:
+            st.warning("Natural language engine not available. Please configure OpenAI API key.")
+    
+    # Documentation
+    if st.button("📚 View Documentation", use_container_width=True):
+        st.session_state.selected_page = "about"
+        st.rerun()
+
+def show_system_status():
+    """Show system status and health."""
+    
+    st.subheader("🔧 System Status")
+    
+    # Service health checks
+    services = {}
+    
+    # FAOSTAT Service
+    if 'faostat_service' in st.session_state:
+        services["FAOSTAT API"] = {"status": "✅", "color": "green"}
+    else:
+        services["FAOSTAT API"] = {"status": "❌", "color": "red"}
+    
+    # OpenAI Service
+    if 'openai_service' in st.session_state and st.session_state.openai_service:
+        services["OpenAI API"] = {"status": "✅", "color": "green"}
+    else:
+        services["OpenAI API"] = {"status": "⚠️", "color": "orange"}
+    
+    # Template Manager
+    if 'template_manager' in st.session_state:
+        services["Templates"] = {"status": "✅", "color": "green"}
+    else:
+        services["Templates"] = {"status": "❌", "color": "red"}
+    
+    # NL Query Engine
+    if 'nl_engine' in st.session_state:
+        services["NL Queries"] = {"status": "✅", "color": "green"}
+    else:
+        services["NL Queries"] = {"status": "⚠️", "color": "orange"}
+    
+    # Display status
+    for service, info in services.items():
+        if info["color"] == "green":
+            st.success(f"{info['status']} {service}")
+        elif info["color"] == "orange":
+            st.warning(f"{info['status']} {service}")
+        else:
+            st.error(f"{info['status']} {service}")
+    
+    # Show current dataset if any
+    if 'current_dataset' in st.session_state and st.session_state.current_dataset:
+        st.info(f"📊 Current Dataset: {st.session_state.current_dataset}")
+    
+    # Show memory usage if available
+    try:
+        import psutil
+        memory_percent = psutil.virtual_memory().percent
+        if memory_percent > 80:
+            st.warning(f"🧠 Memory: {memory_percent:.1f}%")
+        else:
+            st.success(f"🧠 Memory: {memory_percent:.1f}%")
+    except ImportError:
+        pass
+
+def show_feature_highlights():
+    """Show feature highlights and capabilities."""
+    
+    st.subheader("✨ Key Features")
+    
+    features = [
+        {
+            "title": "AI-Powered Analysis",
+            "description": "Generate insights automatically using GPT-4 with your agricultural data.",
+            "icon": "🤖"
+        },
+        {
+            "title": "Natural Language Queries",
+            "description": "Ask questions in plain English and get data-driven answers instantly.",
+            "icon": "💬"
+        },
+        {
+            "title": "Thematic Templates",
+            "description": "Pre-built analysis frameworks for food security, climate impact, and more.",
+            "icon": "📋"
+        },
+        {
+            "title": "Professional Visualizations",
+            "description": "Generate publication-ready charts, maps, and interactive visualizations.",
+            "icon": "📊"
+        },
+        {
+            "title": "Export & Share",
+            "description": "Export analysis to PDF reports, Word documents, or share online.",
+            "icon": "📄"
+        },
+        {
+            "title": "Bookmark System",
+            "description": "Save and organize your analysis configurations for future use.",
+            "icon": "🔖"
+        }
+    ]
+    
+    # Display in grid
+    cols = st.columns(2)
+    for i, feature in enumerate(features):
+        with cols[i % 2]:
+            st.markdown(f"""
+            **{feature['icon']} {feature['title']}**
+            
+            {feature['description']}
+            """)
+
+def show_data_sources_info():
+    """Show information about FAOSTAT data sources."""
+    
+    st.subheader("📊 Data Sources")
     
     st.markdown("""
-    Get started quickly with our pre-configured analysis templates designed for common agricultural policy questions.
+    **FAOSTAT** provides free access to food and agriculture data for over 245 countries and territories:
+    
+    - **Production Data**: Crops, livestock, forestry, and fisheries
+    - **Trade Data**: Import/export statistics and trade matrices  
+    - **Food Security**: Food balance sheets and utilization accounts
+    - **Emissions**: Agricultural greenhouse gas emissions
+    - **Land Use**: Agricultural land and land use change
+    - **Prices**: Producer and consumer price indices
+    
+    Data coverage spans from **1961 to present** with regular updates.
     """)
     
-    # Display featured templates
-    featured_templates = [
-        "food_security",
-        "climate_impact", 
-        "fertilizer_analysis"
-    ]
+    col1, col2, col3 = st.columns(3)
     
-    cols = st.columns(len(featured_templates))
+    with col1:
+        st.metric("🌍 Countries", "245+")
+    with col2:
+        st.metric("📅 Years", "60+")
+    with col3:
+        st.metric("📊 Indicators", "20,000+")
     
-    for i, template_key in enumerate(featured_templates):
-        if template_key in THEMATIC_TEMPLATES:
-            template = THEMATIC_TEMPLATES[template_key]
-            
-            with cols[i]:
-                with st.container():
-                    st.markdown(f"### {template['name']}")
-                    st.markdown(f"_{template['description']}_")
-                    
-                    # Show key datasets
-                    st.markdown("**Datasets:**")
-                    for dataset in template['datasets'][:2]:  # Show first 2
-                        st.text(f"• {dataset['name']}")
-                    if len(template['datasets']) > 2:
-                        st.text(f"• ... and {len(template['datasets']) - 2} more")
-                    
-                    # Show focus regions
-                    if template.get('regions_focus'):
-                        st.markdown("**Focus Areas:**")
-                        regions_text = ", ".join(template['regions_focus'][:2])
-                        if len(template['regions_focus']) > 2:
-                            regions_text += f" +{len(template['regions_focus']) - 2} more"
-                        st.text(regions_text)
-                    
-                    if st.button(f"🚀 Use {template['name']}", key=f"template_{template_key}"):
-                        st.session_state.selected_template = template_key
-                        st.session_state.selected_page = "Thematic Templates"
-                        st.rerun()
+    st.info("💡 **Tip**: Start with the Dataset Browser to explore available data categories.")
 
-def render_tips_and_tricks():
-    """Render tips and tricks section."""
-    
-    st.markdown("## 💡 Tips & Tricks")
-    
-    tips = [
-        {
-            "title": "🔍 Smart Dataset Search",
-            "content": "Use keywords like 'production', 'trade', or 'population' to quickly find relevant datasets."
-        },
-        {
-            "title": "🎯 Effective Filtering", 
-            "content": "Start with recent years (2010+) and major regions for faster processing and clearer trends."
-        },
-        {
-            "title": "📊 Better Visualizations",
-            "content": "Limit to top 10-15 countries/items for readable charts. Use time series for trend analysis."
-        },
-        {
-            "title": "🤖 AI Query Tips",
-            "content": "Ask specific questions like 'What are the trends in wheat production in Asia?' for better AI responses."
-        },
-        {
-            "title": "📄 Professional Reports",
-            "content": "Use thematic templates for publication-ready briefs that follow FAO formatting standards."
-        }
-    ]
-    
-    # Display tips in expandable sections
-    for tip in tips:
-        with st.expander(tip["title"]):
-            st.markdown(tip["content"])
-
-def render_news_and_updates():
-    """Render news and updates section."""
-    
-    st.markdown("## 📢 What's New")
-    
-    # Sample updates - in real implementation, these could come from a config file or API
-    updates = [
-        {
-            "date": "2024-12-15",
-            "title": "New AI-Powered Natural Language Queries",
-            "description": "Ask questions about your data in plain English and get instant insights.",
-            "type": "feature"
-        },
-        {
-            "date": "2024-12-10", 
-            "title": "Enhanced PDF Report Generation",
-            "description": "Professional reports now include improved formatting and FAO branding.",
-            "type": "improvement"
-        },
-        {
-            "date": "2024-12-05",
-            "title": "Updated FAOSTAT API Integration",
-            "description": "Faster data loading and improved error handling for better reliability.",
-            "type": "update"
-        }
-    ]
-    
-    for update in updates:
-        # Color coding by type
-        if update["type"] == "feature":
-            st.success(f"🆕 **{update['title']}** ({update['date']})")
-        elif update["type"] == "improvement":
-            st.info(f"✨ **{update['title']}** ({update['date']})")
-        else:
-            st.info(f"🔄 **{update['title']}** ({update['date']})")
-        
-        st.markdown(f"   {update['description']}")
-        st.markdown("")
-
-def render_getting_started_checklist():
-    """Render a getting started checklist for new users."""
-    
-    st.markdown("## ✅ Getting Started Checklist")
-    
-    checklist_items = [
-        {
-            "task": "Configure OpenAI API Key",
-            "description": "Enable AI-powered insights and natural language queries",
-            "check_condition": lambda: st.session_state.get('openai_service') is not None,
-            "action_page": None
-        },
-        {
-            "task": "Browse Available Datasets", 
-            "description": "Explore the 200+ FAOSTAT datasets available for analysis",
-            "check_condition": lambda: st.session_state.get('current_dataset_code') is not None,
-            "action_page": "Dataset Browser"
-        },
-        {
-            "task": "Run Your First Analysis",
-            "description": "Generate visualizations and insights from agricultural data",
-            "check_condition": lambda: st.session_state.get('analysis_results') is not None,
-            "action_page": "Analysis"
-        },
-        {
-            "task": "Generate a Professional Brief",
-            "description": "Create a publication-ready PDF or Word document",
-            "check_condition": lambda: False,  # Could track if user has generated a report
-            "action_page": "Thematic Templates"
-        }
-    ]
-    
-    for i, item in enumerate(checklist_items):
-        is_complete = item["check_condition"]()
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            status_icon = "✅" if is_complete else "⏳"
-            st.markdown(f"{status_icon} **{item['task']}**")
-            st.markdown(f"   _{item['description']}_")
-        
-        with col2:
-            if not is_complete and item["action_page"]:
-                if st.button(f"Go →", key=f"checklist_{i}"):
-                    st.session_state.selected_page = item["action_page"]
-                    st.rerun()
-    
-    # Progress calculation
-    completed_items = sum(1 for item in checklist_items if item["check_condition"]())
-    progress = completed_items / len(checklist_items)
-    
-    st.progress(progress)
-    st.markdown(f"**Progress: {completed_items}/{len(checklist_items)} completed ({progress*100:.0f}%)**")
-
-# Main render function with sections
-def render():
-    """Render the complete home page."""
-    
-    # Welcome section
-    render_welcome_section()
-    
-    st.markdown("---")
-    
-    # Quick start section
-    render_quick_start_section()
-    
-    st.markdown("---")
-    
-    # Getting started checklist for new users
-    render_getting_started_checklist()
-    
-    st.markdown("---")
-    
-    # Recent activity
-    render_recent_activity()
-    
-    st.markdown("---")
-    
-    # System overview
-    render_system_overview()
-    
-    st.markdown("---")
-    
-    # Featured templates
-    render_featured_templates()
-    
-    st.markdown("---")
-    
-    # Tips and tricks
-    render_tips_and_tricks()
-    
-    st.markdown("---")
-    
-    # News and updates
-    render_news_and_updates()
+if __name__ == "__main__":
+    show_home_page()

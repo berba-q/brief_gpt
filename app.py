@@ -33,11 +33,10 @@ try:
     
     # Import pages
     from pages.home import show_home_page
-    from pages.dataset_browser import show_dataset_browser
-    from pages.analysis import show_analysis_page
-    from pages.thematic_templates import show_thematic_templates_page
-    from pages.nl_query import show_nl_query_page
-    from pages.about import show_about_page
+    from pages.dataset_browser import render
+    from pages.analysis import render
+    from pages.thematic_templates import render
+    from pages.about import render
     
 except ImportError as e:
     st.error(f"Error importing modules: {str(e)}")
@@ -188,20 +187,20 @@ def main():
             show_home_page()
         
         elif selected_page == "dataset_browser":
-            show_dataset_browser()
+            render()
         
         elif selected_page == "analysis":
-            show_analysis_page()
+            render()
         
         elif selected_page == "thematic_templates":
-            show_thematic_templates_page()
-        
+            render()
+
         elif selected_page == "nl_query":
-            show_nl_query_page()
-        
+            render()
+
         elif selected_page == "about":
-            show_about_page()
-        
+            render()
+
         else:
             st.error(f"Unknown page: {selected_page}")
     
