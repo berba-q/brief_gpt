@@ -11,6 +11,7 @@ from datetime import datetime
 
 def show_about_page():
     """Render the about page."""
+    st.write("✅ About Page Entry Reached") # Debugging line to confirm page entry
     
     st.title("ℹ️ About FAOSTAT Analytics")
     
@@ -251,7 +252,7 @@ def render_technical_info():
         
         **OpenAI API:**
         
-        - Models: GPT-4, GPT-3.5-turbo
+        - Models: GPT-4, GPT-o3
         - Token Management: Efficient prompt design
         - Cost Optimization: Response caching
         - Error Handling: Graceful degradation
@@ -392,8 +393,7 @@ def render_credits():
             "NumPy - Numerical computing"
         ],
         "AI & Machine Learning": [
-            "OpenAI - GPT models for natural language processing",
-            "Anthropic - Claude models (development)",
+            "OpenAI - GPT models for natural language processing"
         ],
         "Visualization": [
             "Matplotlib - Statistical plotting",

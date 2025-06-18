@@ -22,27 +22,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import application modules
-try:
-    from config.config_manager import ConfigManager
-    from services.faostat_service import FAOStatService
-    from services.openai_service import OpenAIService
-    from features.template_manager import TemplateManager
-    from features.nl_query_engine import NaturalLanguageQueryEngine
-    from components.sidebar import create_sidebar
-    
-    # Import pages
-    from pages.home import show_home_page
-    from pages.dataset_browser import show_dataset_browser
-    from pages.analysis import show_analysis_page
-    from pages.thematic_templates import show_template_preview
-    from pages.nl_query import show_nl_query_page
-    from pages.about import show_about_page
-    
-except ImportError as e:
-    st.error(f"Error importing modules: {str(e)}")
-    st.stop()
-
 # Page configuration
 st.set_page_config(
     page_title="FAOSTAT Analytics",
@@ -50,8 +29,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'Get Help': 'https://github.com/your-repo/faostat-analytics',
-        'Report a bug': 'https://github.com/your-repo/faostat-analytics/issues',
         'About': """
         # FAOSTAT Analytics
         
@@ -63,39 +40,32 @@ st.set_page_config(
     }
 )
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .main > div {
-        padding-top: 2rem;
-    }
-    .stAlert {
-        margin-top: 1rem;
-        margin-bottom: 1rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
-    }
-    .success-card {
-        background-color: #d4edda;
-        border-color: #c3e6cb;
-        border-left: 4px solid #28a745;
-    }
-    .warning-card {
-        background-color: #fff3cd;
-        border-color: #ffeaa7;
-        border-left: 4px solid #ffc107;
-    }
-    .error-card {
-        background-color: #f8d7da;
-        border-color: #f5c6cb;
-        border-left: 4px solid #dc3545;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Import application modules
+try:
+    from config.config_manager import ConfigManager
+    from services.faostat_service import FAOStatService
+    from services.openai_service import OpenAIService
+    from features.template_manager import TemplateManager
+    from features.nl_query_engine import NaturalLanguageQueryEngine
+    from utils.visualization import VisualizationGenerator
+    from services.document_service import DocumentService
+    from components.sidebar import create_sidebar
+    
+    # Import pages
+    from pages_backup.home import show_home_page
+    from pages_backup.dataset_browser import show_dataset_browser
+    from pages_backup.analysis import show_analysis_page
+    from pages_backup.thematic_templates import show_thematic_templates_page
+    from pages_backup.nl_query import show_nl_query_page
+    from pages_backup.about import show_about_page
+    
+except ImportError as e:
+    st.error(f"Error importing modules: {str(e)}")
+    st.stop()
+
+st.write("✅ APP.PY IS RUNNING - OUTSIDE MAIN")
+logger.info("✅ APP.PY IS RUNNING - OUTSIDE MAIN")
+
 
 def initialize_services():
     """Initialize all application services and store in session state."""
@@ -115,8 +85,18 @@ def initialize_services():
         )
         st.session_state.faostat_service = faostat_service
         
+        # Initialize visualization generator
+        viz_generator = VisualizationGenerator(
+            output_dir=os.path.join(config.get_output_directory(), "figures")
+        )
+        st.session_state.viz_generator = viz_generator
+        
+        # Initialize document service
+        doc_service = DocumentService(config)
+        st.session_state.doc_service = doc_service
+        
         # Initialize OpenAI service if API key is available
-        openai_api_key = config.get_openai_api_key()
+        openai_api_key = config.get_openai_api_key() or st.session_state.get('openai_api_key')
         if openai_api_key:
             model_config = config.get_model_config('comprehensive')
             openai_service = OpenAIService(
@@ -139,14 +119,17 @@ def initialize_services():
         st.session_state.template_manager = template_manager
         
         # Initialize session state variables
-        if 'current_dataset' not in st.session_state:
-            st.session_state.current_dataset = None
+        if 'current_dataset_code' not in st.session_state:
+            st.session_state.current_dataset_code = None
+        
+        if 'current_dataset_name' not in st.session_state:
+            st.session_state.current_dataset_name = None
         
         if 'current_dataset_df' not in st.session_state:
             st.session_state.current_dataset_df = None
         
-        if 'analysis_results' not in st.session_state:
-            st.session_state.analysis_results = None
+        if 'current_page' not in st.session_state:
+            st.session_state.current_page = 'home'
         
         st.session_state.services_initialized = True
         logger.info("Services initialized successfully")
@@ -159,51 +142,48 @@ def initialize_services():
 def main():
     """Main application function."""
     
+    st.write("✅ MAIN() FUNCTION ENTERED")
+    logger.info("✅ MAIN() FUNCTION ENTERED")
+    
     # Initialize services
     initialize_services()
     
-    # Main header
-    st.title("🌾 FAOSTAT Analytics")
-    st.markdown("*Advanced analytics platform for FAO agricultural data*")
-    
-    # Create sidebar navigation
+    # Create sidebar navigation (this replaces the old confusing navigation)
     selected_page = create_sidebar()
     
-    # Check for OpenAI configuration
-    if not st.session_state.get('openai_service') and selected_page in ['nl_query', 'thematic_templates']:
-        st.warning("""
-        ⚠️ **OpenAI API Key Required**
-        
-        Some features require an OpenAI API key to function properly. Please configure your API key in the configuration file or contact your administrator.
-        
-        Features requiring OpenAI:
-        - Natural Language Queries
-        - AI-Powered Insights
-        - Thematic Analysis Templates
-        """)
-    
-    # Route to selected page
+    st.write(f"DEBUG selected_page: '{selected_page}'")
+    logger.info(f"DEBUG selected_page: '{selected_page}'")
+    # Main content area
     try:
+        # Route to selected page based on sidebar navigation
+        
         if selected_page == "home":
+            logger.info("Displaying Home Page")
             show_home_page()
         
         elif selected_page == "dataset_browser":
+            logger.info("Displaying Dataset Browser Page")
             show_dataset_browser()
         
         elif selected_page == "analysis":
+            logger.info("Displaying Analysis Page")
             show_analysis_page()
         
         elif selected_page == "thematic_templates":
+            logger.info("Displaying Thematic Templates Page")
             show_thematic_templates_page()
         
         elif selected_page == "nl_query":
+            logger.info("Displaying Natural Language Query Page")
             show_nl_query_page()
         
         elif selected_page == "about":
+            logger.info("Displaying About Page")
             show_about_page()
         
         else:
             st.error(f"Unknown page: {selected_page}")
+            logger.warning(f"Unknown page selected: {selected_page}")
     
     except Exception as e:
         st.error(f"Error displaying page '{selected_page}': {str(e)}")
@@ -213,55 +193,6 @@ def main():
         if st.checkbox("Show debug information"):
             st.exception(e)
 
-def show_startup_checks():
-    """Show system startup checks and status."""
-    
-    with st.expander("🔍 System Status", expanded=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Services Status:**")
-            
-            # FAOSTAT Service
-            if st.session_state.get('faostat_service'):
-                st.success("✅ FAOSTAT Service")
-            else:
-                st.error("❌ FAOSTAT Service")
-            
-            # OpenAI Service
-            if st.session_state.get('openai_service'):
-                st.success("✅ OpenAI Service")
-            else:
-                st.warning("⚠️ OpenAI Service (API key required)")
-            
-            # Template Manager
-            if st.session_state.get('template_manager'):
-                st.success("✅ Template Manager")
-            else:
-                st.error("❌ Template Manager")
-            
-            # NL Query Engine
-            if st.session_state.get('nl_engine'):
-                st.success("✅ NL Query Engine")
-            else:
-                st.warning("⚠️ NL Query Engine (requires OpenAI)")
-        
-        with col2:
-            st.write("**Configuration:**")
-            
-            config = st.session_state.get('config')
-            if config:
-                st.write(f"- Output Directory: {config.get_output_directory()}")
-                st.write(f"- FAOSTAT URL: {config.get_faostat_base_url()}")
-                
-                if config.get_openai_api_key():
-                    st.write("- OpenAI API: ✅ Configured")
-                else:
-                    st.write("- OpenAI API: ❌ Not configured")
-            else:
-                st.error("Configuration not loaded")
-
-# Add footer
 def show_footer():
     """Show application footer."""
     
@@ -271,7 +202,7 @@ def show_footer():
     
     with col2:
         st.markdown("""
-        <div style='text-align: center; color: #666; font-size: 0.9em;'>
+        <div style='text-align: center; color: #666; font-size: 0.9rem;'>
             <p>
                 FAOSTAT Analytics Platform | 
                 Data from <a href='https://www.fao.org/faostat/' target='_blank'>FAO Statistics</a> | 
@@ -283,10 +214,6 @@ def show_footer():
 
 if __name__ == "__main__":
     try:
-        # Show system status for debugging
-        if st.sidebar.checkbox("Show System Status", value=False):
-            show_startup_checks()
-        
         # Run main application
         main()
         

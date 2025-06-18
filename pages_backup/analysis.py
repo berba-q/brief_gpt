@@ -5,6 +5,7 @@ This module provides the main analysis interface where users can filter data,
 generate visualizations, and create AI-powered insights.
 """
 
+import os
 import streamlit as st
 import pandas as pd
 import logging
@@ -538,13 +539,21 @@ def generate_ai_insights(filtered_df: pd.DataFrame, dataset_name: str, openai_se
             figures = st.session_state.get('current_figures', [])
             figure_descriptions = [fig.description for fig in figures]
             
-            # Generate insights
             insights = openai_service.generate_insights(
                 dataset_name=dataset_name,
                 summary_stats=summary_stats,
                 figures_descriptions=figure_descriptions
             )
-            
+            # --- Patch: parse string JSON if needed ---
+            import json
+            if isinstance(insights, str):
+                try:
+                    insights = json.loads(insights)
+                except Exception as parse_err:
+                    logger.error(f"Failed to parse insights JSON in caller: {parse_err}")
+                    st.error("⚠️ AI returned an invalid response. Please try again.")
+                    return
+            # ------------------------------------------
             # Store insights
             st.session_state.current_insights = insights
             
@@ -558,34 +567,42 @@ def display_existing_insights():
     """Display previously generated AI insights."""
     
     insights = st.session_state.get('current_insights')
-    
+
+    import json
+    if isinstance(insights, str):
+        try:
+            insights = json.loads(insights)
+        except Exception as e:
+            st.error(f"⚠️ Unable to parse insights: {e}")
+            return
+
     if insights:
         # Highlights
         if 'highlights' in insights and insights['highlights']:
             st.markdown("#### ✨ Key Highlights")
             for highlight in insights['highlights']:
                 st.info(f"💡 {highlight}")
-        
+
         # Background
         if 'background' in insights and insights['background']:
             st.markdown("#### 📖 Background")
             st.write(insights['background'])
-        
+
         # Global trends
         if 'global_trends' in insights and insights['global_trends']:
             st.markdown("#### 🌍 Global Trends")
             st.write(insights['global_trends'])
-        
+
         # Regional analysis
         if 'regional_analysis' in insights and insights['regional_analysis']:
             st.markdown("#### 🗺️ Regional Analysis")
             st.write(insights['regional_analysis'])
-        
+
         # Explanatory notes
         if 'explanatory_notes' in insights and insights['explanatory_notes']:
             st.markdown("#### ⚠️ Explanatory Notes")
             st.write(insights['explanatory_notes'])
-        
+
         # Generate report button
         st.markdown("---")
         if st.button("📄 Generate Full Report", type="primary"):
