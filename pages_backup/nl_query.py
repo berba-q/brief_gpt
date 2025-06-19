@@ -25,8 +25,12 @@ def show_nl_query_page():
     if not check_ai_availability():
         return
     
-    # Initialize query engine
-    query_engine = NaturalLanguageQueryEngine()
+    # Initialize query engine with proper services
+    query_engine = initialize_query_engine()
+    
+    if not query_engine:
+        st.error("❌ Could not initialize natural language query engine")
+        return
     
     # Main interface
     render_main_interface(query_engine)
@@ -63,25 +67,107 @@ def check_ai_availability() -> bool:
     
     return True
 
-def render_main_interface(query_engine):
+def initialize_query_engine() -> Optional[NaturalLanguageQueryEngine]:
+    """Initialize the natural language query engine with required services."""
+    
+    try:
+        # Get required services from session state
+        openai_service = st.session_state.get('openai_service')
+        faostat_service = st.session_state.get('faostat_service')
+        
+        if not openai_service:
+            st.error("❌ OpenAI service not available. Please configure your API key in the sidebar.")
+            return None
+        
+        if not faostat_service:
+            st.error("❌ FAOSTAT service not available. Please restart the application.")
+            return None
+        
+        # Create the query engine with both required services
+        query_engine = NaturalLanguageQueryEngine(
+            openai_service=openai_service,
+            faostat_service=faostat_service
+        )
+        
+        return query_engine
+        
+    except Exception as e:
+        logger.error(f"Error initializing query engine: {str(e)}")
+        st.error(f"❌ Error initializing query engine: {str(e)}")
+        return None
+
+def render_main_interface(query_engine: NaturalLanguageQueryEngine):
     """Render the main query interface."""
     
-    # Get current dataset context
-    current_dataset = st.session_state.get('current_dataset')
-    current_dataset_name = st.session_state.get('current_dataset_name', 'No dataset selected')
+    # Get current dataset context - check multiple possible keys safely
+    current_dataset = st.session_state.get('current_dataset_code')
+    if not current_dataset:
+        current_dataset = st.session_state.get('current_dataset')
+    
+    current_dataset_name = st.session_state.get('current_dataset_name')
+    if not current_dataset_name:
+        current_dataset_name = st.session_state.get('dataset_name')
+    if not current_dataset_name:
+        current_dataset_name = current_dataset if current_dataset else 'No dataset selected'
+    
+    # Safely get dataset DataFrame
+    current_dataset_df = None
+    for key in ['current_dataset_df', 'dataset_df', 'current_dataset']:
+        df_candidate = st.session_state.get(key)
+        if df_candidate is not None:
+            # Check if it's actually a DataFrame
+            if hasattr(df_candidate, 'empty'):  # DataFrame-like object
+                current_dataset_df = df_candidate
+                break
+    
+    # Debug info to help identify the issue
+    if st.checkbox("🐛 Show Debug Info", help="Show session state keys for debugging"):
+        st.write("**Session State Keys:**")
+        dataset_keys = [k for k in st.session_state.keys() if 'dataset' in k.lower()]
+        st.write(dataset_keys)
+        
+        st.write("**Current Values:**")
+        st.write(f"current_dataset: {current_dataset}")
+        st.write(f"current_dataset_name: {current_dataset_name}")
+        st.write(f"current_dataset_df type: {type(current_dataset_df)}")
+        if current_dataset_df is not None and hasattr(current_dataset_df, 'shape'):
+            st.write(f"current_dataset_df shape: {current_dataset_df.shape}")
     
     # Dataset context display
-    render_dataset_context(current_dataset, current_dataset_name)
+    render_dataset_context(current_dataset, current_dataset_name, current_dataset_df)
     
     # Query interface
-    show_query_interface(current_dataset, current_dataset_name)
+    try:
+        result = show_query_interface(
+            nl_engine=query_engine,
+            current_dataset=current_dataset,
+            dataset_df=current_dataset_df,
+            key_prefix="nl_query"
+        )
+        
+        # Store query result in session state for analytics
+        if result and 'query' in result:
+            store_query_result(result)
+            
+    except Exception as e:
+        logger.error(f"Error in query interface: {str(e)}")
+        st.error(f"❌ Error in query interface: {str(e)}")
 
-def render_dataset_context(dataset_df: Optional[pd.DataFrame], dataset_name: str):
+def render_dataset_context(dataset_code: Optional[str], dataset_name: str, dataset_df: Optional[pd.DataFrame]):
     """Render information about the current dataset context."""
     
     st.markdown("## 📊 Current Context")
     
-    if dataset_df is not None and not dataset_df.empty:
+    # Check if we have a valid dataset
+    has_dataset = False
+    if dataset_code is not None and dataset_df is not None:
+        try:
+            # Safely check if DataFrame is not empty
+            has_dataset = isinstance(dataset_df, pd.DataFrame) and not dataset_df.empty
+        except Exception:
+            has_dataset = False
+    
+    if has_dataset:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -118,6 +204,11 @@ def render_dataset_context(dataset_df: Optional[pd.DataFrame], dataset_name: str
         
         You can still ask general questions about agricultural data and FAOSTAT!
         """)
+        
+        # Add a quick link to dataset browser
+        if st.button("📊 Go to Dataset Browser", type="primary"):
+            st.session_state.current_page = "dataset_browser"
+            st.rerun()
 
 def render_quick_insights(dataset_df: pd.DataFrame):
     """Render quick insights about the current dataset."""
@@ -151,6 +242,29 @@ def render_quick_insights(dataset_df: pd.DataFrame):
     except Exception as e:
         logger.error(f"Error generating quick insights: {str(e)}")
         st.text("Could not generate insights for this dataset")
+
+def store_query_result(result: Dict[str, Any]):
+    """Store query result for analytics."""
+    
+    try:
+        # Initialize query history if not exists
+        if 'query_history' not in st.session_state:
+            st.session_state.query_history = []
+        
+        # Add timestamp if not present
+        if 'timestamp' not in result:
+            from datetime import datetime
+            result['timestamp'] = datetime.now()
+        
+        # Store the result
+        st.session_state.query_history.append(result)
+        
+        # Keep only last 50 queries
+        if len(st.session_state.query_history) > 50:
+            st.session_state.query_history = st.session_state.query_history[-50:]
+            
+    except Exception as e:
+        logger.error(f"Error storing query result: {str(e)}")
 
 def render_query_examples():
     """Render example queries to help users get started."""
@@ -216,21 +330,24 @@ def render_query_analytics():
     
     with col2:
         # Calculate average query length
-        avg_length = sum(len(q['query']) for q in query_history) / len(query_history)
+        avg_length = sum(len(q.get('query', '')) for q in query_history) / len(query_history)
         st.metric("Avg Query Length", f"{avg_length:.0f} chars")
     
     with col3:
         # Count queries today
         from datetime import datetime, timedelta
         today = datetime.now().date()
-        queries_today = sum(1 for q in query_history if q['timestamp'].date() == today)
+        queries_today = sum(1 for q in query_history 
+                          if q.get('timestamp') and 
+                          (q['timestamp'].date() == today if hasattr(q['timestamp'], 'date') else False))
         st.metric("Queries Today", queries_today)
     
     with col4:
         # Most common dataset
-        datasets = [q['dataset'] for q in query_history if q['dataset']]
+        datasets = [q.get('dataset_code', '') for q in query_history if q.get('dataset_code')]
         if datasets:
-            most_common = max(set(datasets), key=datasets.count)
+            from collections import Counter
+            most_common = Counter(datasets).most_common(1)[0][0]
             st.metric("Most Queried Dataset", most_common[:20] + "..." if len(most_common) > 20 else most_common)
         else:
             st.metric("Most Queried Dataset", "N/A")
@@ -239,7 +356,7 @@ def render_query_analytics():
     with st.expander("📈 Query Patterns"):
         
         # Query length distribution
-        query_lengths = [len(q['query']) for q in query_history]
+        query_lengths = [len(q.get('query', '')) for q in query_history]
         
         st.markdown("**Query Length Distribution:**")
         length_bins = {
@@ -255,8 +372,10 @@ def render_query_analytics():
         if query_history:
             all_words = []
             for q in query_history:
-                words = q['query'].lower().split()
-                all_words.extend([w for w in words if len(w) > 3])  # Filter short words
+                query_text = q.get('query', '')
+                if query_text:
+                    words = query_text.lower().split()
+                    all_words.extend([w for w in words if len(w) > 3])  # Filter short words
             
             if all_words:
                 from collections import Counter
@@ -318,157 +437,5 @@ def render_query_help():
         - Responses are limited to agricultural/food-related topics
         """)
 
-def render_query_feedback():
-    """Render interface for query feedback and improvement."""
-    
-    st.markdown("## 💬 Feedback & Suggestions")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 📝 Improve This Feature")
-        
-        feedback_type = st.selectbox(
-            "Feedback Type",
-            options=[
-                "Feature Request",
-                "Query Accuracy Issue", 
-                "Interface Improvement",
-                "General Feedback"
-            ]
-        )
-        
-        feedback_text = st.text_area(
-            "Your Feedback",
-            placeholder="Tell us how we can improve the natural language query feature...",
-            height=100
-        )
-        
-        if st.button("📨 Submit Feedback"):
-            # In a real implementation, this would send feedback to developers
-            st.success("Thank you for your feedback! We appreciate your input.")
-    
-    with col2:
-        st.markdown("### 🔧 Troubleshooting")
-        
-        st.markdown("""
-        **Common Issues:**
-        
-        **Slow Responses:**
-        - Check internet connection
-        - Try shorter, more specific queries
-        - Verify OpenAI API key is working
-        
-        **Inaccurate Responses:**
-        - Ensure dataset is loaded correctly
-        - Try rephrasing your question
-        - Be more specific about what you want
-        
-        **No Response:**
-        - Check OpenAI API key configuration
-        - Verify you have API credits remaining
-        - Try refreshing the page
-        
-        **Need Help:**
-        - Use the example questions as templates
-        - Start with simple queries and build complexity
-        - Check the Query Help section above
-        """)
-
-def render_advanced_features():
-    """Render advanced natural language query features."""
-    
-    st.markdown("## 🚀 Advanced Features")
-    
-    # Multi-step queries
-    with st.expander("🔄 Multi-Step Analysis"):
-        st.markdown("""
-        **Chain Multiple Questions:**
-        
-        You can ask follow-up questions that build on previous responses:
-        
-        1. "What are the top wheat producing countries?"
-        2. "How have these countries' yields changed over time?"
-        3. "What factors might explain the differences?"
-        
-        The AI will remember context from previous questions in your session.
-        """)
-        
-        if st.button("🧪 Try Multi-Step Example"):
-            st.session_state.nl_query_input = "What are the top 5 wheat producing countries?"
-            st.rerun()
-    
-    # Query templates
-    with st.expander("📋 Query Templates"):
-        st.markdown("**Quick Query Templates:**")
-        
-        templates = {
-            "Trend Analysis": "How has [INDICATOR] changed in [REGION] from [START_YEAR] to [END_YEAR]?",
-            "Country Ranking": "Which countries have the highest [METRIC] in [YEAR]?",
-            "Regional Comparison": "Compare [INDICATOR] between [REGION_A] and [REGION_B]",
-            "Factor Analysis": "What factors explain the differences in [OUTCOME] between countries?",
-            "Future Outlook": "Based on historical trends, what might happen to [INDICATOR] in the future?"
-        }
-        
-        for template_name, template_text in templates.items():
-            st.markdown(f"**{template_name}:**")
-            st.code(template_text)
-    
-    # Data export from queries
-    with st.expander("💾 Export Query Results"):
-        st.markdown("""
-        **Export Options:**
-        
-        - **Text Export:** Download query and response as text file
-        - **Data Export:** Export any data referenced in the response
-        - **Visualization Export:** Save any charts mentioned in responses
-        - **Report Generation:** Include query results in formal reports
-        
-        Use the export buttons that appear after each query response.
-        """)
-
-# Main render function with all sections
-def render():
-    """Render the complete natural language query page."""
-    
-    st.title("💬 Natural Language Queries")
-    st.markdown("Ask questions about agricultural data in plain English and get AI-powered insights")
-    
-    # Check AI availability
-    if not check_ai_availability():
-        return
-    
-    # Initialize query engine
-    try:
-        query_engine = NLQueryEngine()
-    except Exception as e:
-        st.error(f"Error initializing query engine: {str(e)}")
-        return
-    
-    # Main interface
-    render_main_interface(query_engine)
-    
-    st.markdown("---")
-    
-    # Query examples and help
-    render_query_examples()
-    
-    st.markdown("---")
-    
-    # Advanced features
-    render_advanced_features()
-    
-    st.markdown("---")
-    
-    # Query help
-    render_query_help()
-    
-    st.markdown("---")
-    
-    # Analytics (only if there's history)
-    if st.session_state.get('query_history'):
-        render_query_analytics()
-        st.markdown("---")
-    
-    # Feedback
-    render_query_feedback()
+if __name__ == "__main__":
+    show_nl_query_page()

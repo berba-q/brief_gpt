@@ -81,11 +81,15 @@ def detect_dataset_theme(metadata: Optional[Dict[str, Any]], dataset_name: str) 
     if not metadata:
         return _fallback_theme_detection(dataset_name)
     
-    # Extract relevant fields for theme detection
-    dataset_code = metadata.get('DatasetCode', '')
-    description = metadata.get('DatasetDescription', '').lower()
-    topic = metadata.get('Topic', '').lower()
-    dataset_name_lower = dataset_name.lower()
+    # Extract relevant fields for theme detection - handle None values properly
+    dataset_code = metadata.get('DatasetCode', '') or ''
+    description = metadata.get('DatasetDescription') or ''
+    topic = metadata.get('Topic') or ''
+    
+    # Safely convert to lowercase only if we have string values
+    description = description.lower() if isinstance(description, str) else ''
+    topic = topic.lower() if isinstance(topic, str) else ''
+    dataset_name_lower = dataset_name.lower() if isinstance(dataset_name, str) else ''
     
     # Theme detection rules based on FAOSTAT patterns
     theme_keywords = {

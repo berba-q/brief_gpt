@@ -1,12 +1,12 @@
 """
-OpenAI service for integrating with GPT models.
+OpenAI service for integrating with GPT models - UPDATED VERSION.
 
 This module provides a service class for interacting with OpenAI's API,
 generating insights, and handling various prompt-based tasks while
 implementing cost-saving strategies and dataset theme detection.
 """
 
-import openai
+from openai import OpenAI
 import json
 import time
 import hashlib
@@ -38,7 +38,7 @@ class OpenAIService:
     - Implements caching, throttling, and other cost-saving strategies
     
     Attributes:
-        api_key (str): OpenAI API key
+        client (OpenAI): OpenAI client instance
         model (str): GPT model to use
         max_tokens (int): Maximum tokens for generation
         temperature (float): Temperature setting (0.0-1.0)
@@ -63,14 +63,13 @@ class OpenAIService:
             temperature: Temperature setting (0.0-1.0)
             cache_enabled: Whether to use response caching
         """
-        self.api_key = api_key
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.cache_enabled = cache_enabled
         
-        # Set up OpenAI client
-        openai.api_key = api_key
+        # Set up OpenAI client (modern API)
+        self.client = OpenAI(api_key=api_key)
         
         # Rate limiting settings
         self.last_request_time = 0
@@ -146,16 +145,24 @@ class OpenAIService:
         
         self.last_request_time = time.time()
     
-    def _update_token_usage(self, usage_data: Dict[str, int]) -> None:
+    def _update_token_usage(self, usage_data) -> None:
         """
         Update token usage statistics.
         
         Args:
             usage_data: Token usage data from API response
         """
-        self.token_usage["prompt_tokens"] += usage_data.get("prompt_tokens", 0)
-        self.token_usage["completion_tokens"] += usage_data.get("completion_tokens", 0)
-        self.token_usage["total_tokens"] += usage_data.get("total_tokens", 0)
+        # Handle both old and new API response formats
+        if hasattr(usage_data, 'prompt_tokens'):
+            # New API format
+            self.token_usage["prompt_tokens"] += usage_data.prompt_tokens
+            self.token_usage["completion_tokens"] += usage_data.completion_tokens
+            self.token_usage["total_tokens"] += usage_data.total_tokens
+        elif isinstance(usage_data, dict):
+            # Old API format (fallback)
+            self.token_usage["prompt_tokens"] += usage_data.get("prompt_tokens", 0)
+            self.token_usage["completion_tokens"] += usage_data.get("completion_tokens", 0)
+            self.token_usage["total_tokens"] += usage_data.get("total_tokens", 0)
     
     def _call_openai_api(
         self, 
@@ -196,8 +203,8 @@ class OpenAIService:
         self._throttle_requests()
         
         try:
-            # Call the OpenAI API
-            response = openai.ChatCompletion.create(
+            # Call the OpenAI API using the modern client
+            response = self.client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
@@ -245,8 +252,8 @@ class OpenAIService:
         try:
             # Select model configuration based on model type
             if model_type == "standard":
-                model = "gpt-3.5-turbo"
-                max_tokens = 1000
+                model = "gpt-4"
+                max_tokens = 800
                 temperature = 0.5
             else:  # comprehensive
                 model = self.model
@@ -263,7 +270,7 @@ class OpenAIService:
             
             # Create messages for the API call
             messages = [
-                {"role": "system", "content": "You are an expert agricultural data analyst specialized in FAO data interpretation."},
+                {"role": "system", "content": "You are an expert agricultural data analyst specialized in FAO data interpretation. Always respond with valid JSON in the exact format requested."},
                 {"role": "user", "content": prompt}
             ]
             
@@ -277,15 +284,25 @@ class OpenAIService:
             
             # Parse the response - expect JSON format
             try:
-                # Find JSON content in the response
-                json_str = content
+                # Clean the content to extract JSON
+                json_str = content.strip()
                 
-                # Check for code blocks
+                # Handle common JSON formatting issues
                 if "```json" in content:
-                    json_str = content.split("```json")[1].split("```")[0]
+                    json_str = content.split("```json")[1].split("```")[0].strip()
                 elif "```" in content:
-                    json_str = content.split("```")[1].split("```")[0]
+                    # Try to extract from any code block
+                    json_str = content.split("```")[1].split("```")[0].strip()
                 
+                # Try to find JSON-like content if no code blocks
+                if not json_str.startswith('{'):
+                    # Look for the first { and last }
+                    start = content.find('{')
+                    end = content.rfind('}')
+                    if start != -1 and end != -1 and end > start:
+                        json_str = content[start:end+1]
+                
+                # Parse the JSON
                 insights = json.loads(json_str)
                 
                 # Validate that we have the expected structure
@@ -295,26 +312,28 @@ class OpenAIService:
                     # Fill in missing keys
                     for key in expected_keys:
                         if key not in insights:
-                            insights[key] = f"Information not available for {key}"
+                            insights[key] = f"Information not available for {key.replace('_', ' ')}"
+                
+                return insights
                 
             except json.JSONDecodeError as json_error:
                 logger.error(f"Error parsing JSON from OpenAI response: {str(json_error)}")
-                logger.error(f"Raw content: {content[:500]}...")
+                logger.error(f"Raw content (first 500 chars): {content[:500]}...")
                 
-                # If JSON parsing fails, structure the content manually
+                # If JSON parsing fails, try to extract meaningful content
                 insights = {
                     "highlights": [
-                        "Generated analysis available but could not be structured properly",
-                        "Please review the raw analysis output",
-                        "JSON parsing error occurred during processing"
+                        "Analysis completed but formatting issues occurred",
+                        "Raw AI response contains valuable insights",
+                        "Manual review of analysis recommended"
                     ],
-                    "background": content[:500] + "..." if len(content) > 500 else content,
-                    "global_trends": "Please see background section for available analysis.",
-                    "regional_analysis": "Please see background section for available analysis.",
-                    "explanatory_notes": f"Note: There was an issue with structured insight generation. Raw response was {len(content)} characters."
+                    "background": self._extract_section(content, "background") or content[:500] + "...",
+                    "global_trends": self._extract_section(content, "trends") or "See background section for analysis.",
+                    "regional_analysis": self._extract_section(content, "regional") or "See background section for analysis.", 
+                    "explanatory_notes": f"Note: JSON parsing failed. Response length: {len(content)} characters. Please review raw output for insights."
                 }
-            
-            return insights
+                
+                return insights
             
         except Exception as e:
             logger.error(f"Error generating insights: {str(e)}")
@@ -325,6 +344,55 @@ class OpenAIService:
                 "regional_analysis": "Analysis could not be completed due to an error.",
                 "explanatory_notes": f"Error details: {str(e)}"
             }
+    
+    def _extract_section(self, content: str, section_keyword: str) -> Optional[str]:
+        """
+        Try to extract a section from unstructured content.
+        
+        Args:
+            content: Raw content from AI
+            section_keyword: Keyword to look for
+            
+        Returns:
+            Optional[str]: Extracted section or None
+        """
+        try:
+            content_lower = content.lower()
+            keyword_lower = section_keyword.lower()
+            
+            # Look for the section keyword
+            start_idx = content_lower.find(keyword_lower)
+            if start_idx == -1:
+                return None
+            
+            # Find the start of the actual content (after the keyword)
+            start_idx = content.find(':', start_idx)
+            if start_idx == -1:
+                start_idx = content_lower.find(keyword_lower) + len(keyword_lower)
+            else:
+                start_idx += 1
+            
+            # Find the end (next section or end of content)
+            section_keywords = ['background', 'trends', 'regional', 'analysis', 'notes']
+            end_idx = len(content)
+            
+            for keyword in section_keywords:
+                if keyword != section_keyword:
+                    keyword_idx = content_lower.find(keyword, start_idx)
+                    if keyword_idx != -1:
+                        end_idx = min(end_idx, keyword_idx)
+            
+            # Extract and clean the section
+            section = content[start_idx:end_idx].strip()
+            
+            # Clean up common formatting issues
+            section = section.replace('\n\n', ' ').replace('\n', ' ')
+            section = ' '.join(section.split())  # Normalize whitespace
+            
+            return section[:300] + "..." if len(section) > 300 else section
+            
+        except Exception:
+            return None
     
     def generate_interactive_analysis(
         self, 
@@ -352,7 +420,7 @@ class OpenAIService:
                 max_tokens = self.max_tokens
                 temperature = self.temperature
             else:  # standard
-                model = "gpt-3.5-turbo"
+                model = "gpt-4"
                 max_tokens = 800
                 temperature = 0.5
             
@@ -420,7 +488,7 @@ class OpenAIService:
                 max_tokens = self.max_tokens
                 temperature = 0.7
             else:  # standard
-                model = "gpt-3.5-turbo"
+                model = "gpt-4"
                 max_tokens = 800
                 temperature = 0.5
             
@@ -433,7 +501,7 @@ class OpenAIService:
             
             # Create messages for the API call
             messages = [
-                {"role": "system", "content": "You are an expert data visualization specialist who provides practical and insightful visualization recommendations."},
+                {"role": "system", "content": "You are an expert data visualization specialist who provides practical and insightful visualization recommendations in JSON format."},
                 {"role": "user", "content": prompt}
             ]
             
@@ -491,7 +559,7 @@ class OpenAIService:
                 max_tokens = 800
                 temperature = 0.3
             else:  # standard
-                model = "gpt-3.5-turbo"
+                model = "gpt-4"
                 max_tokens = 500
                 temperature = 0.3
             
@@ -500,7 +568,7 @@ class OpenAIService:
             
             # Create messages for the API call
             messages = [
-                {"role": "system", "content": "You are an expert data analyst who can parse natural language queries into structured parameters."},
+                {"role": "system", "content": "You are an expert data analyst who can parse natural language queries into structured JSON parameters."},
                 {"role": "user", "content": prompt}
             ]
             
@@ -559,12 +627,15 @@ class OpenAIService:
         """
         model = model or self.model
         
-        # Cost per 1K tokens (as of 2023 pricing)
-        # These would need to be updated if pricing changes
+        # Updated cost per 1K tokens (as of 2024 pricing)
         cost_per_1k = {
             "gpt-4": {
                 "prompt": 0.03,
                 "completion": 0.06
+            },
+            "gpt-4-turbo": {
+                "prompt": 0.01,
+                "completion": 0.03
             },
             "gpt-3.5-turbo": {
                 "prompt": 0.0015,
