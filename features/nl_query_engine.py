@@ -4,7 +4,7 @@ Natural language query engine for FAOSTAT Analytics Application - FIXED VERSION.
 This module provides a service class for processing natural language queries
 about FAOSTAT data, converting them into structured analysis parameters,
 and executing the appropriate data operations.
-It includes intelligent matching capabilities that combine fuzzy matching,
+It includes intelligent matching capabilities that combine fuzzy matching.
 """
 
 import re
@@ -66,125 +66,30 @@ class IntelligentFAOSTATMatcher:
     ) -> List[str]:
         """Find best matches using fuzzy matching and patterns."""
         
-        if not available_values:
+        if not query_terms or not available_values:
             return []
         
-        all_matches = {}
+        matched = []
         
-        # Process each query term
-        for query_term in query_terms:
-            if not query_term or not query_term.strip():
-                continue
-                
-            query_term = query_term.strip()
-            
-            # Get fuzzy matches
-            try:
-                fuzzy_matches = self._fuzzy_match(query_term, available_values, threshold * 0.8)
-            except Exception as e:
-                logger.warning(f"Fuzzy matching failed for '{query_term}': {e}")
-                fuzzy_matches = []
-            
-            # Get pattern matches
-            try:
-                pattern_matches = self._pattern_match(query_term, available_values)
-            except Exception as e:
-                logger.warning(f"Pattern matching failed for '{query_term}': {e}")
-                pattern_matches = []
-            
-            # Combine matches for this term
-            term_matches = self._combine_matches(fuzzy_matches, pattern_matches, [])
-            
-            # Add to overall matches with query term as key
-            for match in term_matches[:max_results]:
-                if match not in all_matches:
-                    all_matches[match] = []
-                all_matches[match].append(query_term)
-        
-        # Return matches sorted by number of matching terms
-        if not all_matches:
-            return []
-        
-        sorted_matches = sorted(all_matches.items(), key=lambda x: len(x[1]), reverse=True)
-        return [match for match, _ in sorted_matches[:max_results]]
-    
-    def _fuzzy_match(self, query_term: str, available_values: List[str], threshold: float = 70.0) -> List[Tuple[str, float]]:
-        """Fuzzy string matching using rapidfuzz."""
-        if not available_values:
-            return []
-            
-        try:
-            matches = process.extract(
-                query_term,
-                available_values,
+        for term in query_terms:
+            # Direct fuzzy matching
+            fuzzy_matches = process.extract(
+                term, 
+                available_values, 
                 scorer=fuzz.WRatio,
-                limit=5
+                limit=max_results
             )
-            return [(match[0], match[1]) for match in matches if match[1] >= threshold]
-        except Exception as e:
-            logger.error(f"Fuzzy matching error: {e}")
-            return []
-    
-    def _pattern_match(self, query_term: str, available_values: List[str]) -> List[Tuple[str, float]]:
-        """Pattern-based matching using semantic categories."""
-        query_lower = query_term.lower()
-        matches = []
-        
-        # Find which semantic category the query term belongs to
-        query_category = None
-        for category, terms in self.semantic_patterns.items():
-            if any(term in query_lower or query_lower in term for term in terms):
-                query_category = category
-                break
-        
-        if not query_category:
-            return []
-        
-        # Score available values based on category keywords
-        category_keywords = self.semantic_patterns[query_category]
-        
-        for value in available_values:
-            value_lower = value.lower()
-            score = 0
             
-            # Check how many category keywords appear in the value
-            for keyword in category_keywords:
-                if keyword in value_lower:
-                    score += 80
-                elif any(kw in value_lower for kw in [keyword[:4], keyword[:3]]):
-                    score += 60
-            
-            # Bonus for query term appearing in value
-            if query_lower in value_lower:
-                score += 90
-            elif any(word in value_lower for word in query_lower.split()):
-                score += 70
-            
-            if score > 50:
-                matches.append((value, min(score, 100)))
+            # Add matches above threshold
+            for match, score in fuzzy_matches:
+                if score >= threshold and match not in matched:
+                    matched.append(match)
         
-        return sorted(matches, key=lambda x: x[1], reverse=True)
-    
-    def _combine_matches(self, fuzzy_matches, pattern_matches, semantic_matches) -> List[str]:
-        """Combine and rank matches from different methods."""
-        scores = {}
-        
-        # Add fuzzy match scores (weight: 1.0)
-        for value, score in fuzzy_matches:
-            scores[value] = scores.get(value, 0) + score * 1.0
-        
-        # Add pattern match scores (weight: 0.8)
-        for value, score in pattern_matches:
-            scores[value] = scores.get(value, 0) + score * 0.8
-        
-        # Sort by combined score
-        ranked_values = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        return [value for value, score in ranked_values]
-
+        return matched[:max_results]
 
 class NaturalLanguageQueryEngine:
     """
-    Engine for processing natural language queries about FAOSTAT data.
+    Enhanced Natural Language Query Engine for FAOSTAT data.
     
     FIXED: Better error handling and working query execution.
     """
@@ -401,6 +306,23 @@ class NaturalLanguageQueryEngine:
             if word.istitle() and len(word) > 3:
                 potential_regions.append(word)
         
+        # FIXED: Extract potential items (agricultural products/foods)
+        # Common agricultural items and food products
+        food_items = [
+            'wheat', 'rice', 'maize', 'corn', 'barley', 'oats', 'sorghum', 'millet',
+            'potato', 'potatoes', 'cassava', 'yam', 'plantain', 'banana', 'bananas',
+            'tomato', 'tomatoes', 'onion', 'onions', 'cabbage', 'lettuce', 'carrot', 'carrots',
+            'apple', 'apples', 'orange', 'oranges', 'grape', 'grapes', 'lemon', 'lemons',
+            'beef', 'pork', 'chicken', 'poultry', 'fish', 'milk', 'cheese', 'eggs',
+            'soybean', 'soybeans', 'cotton', 'coffee', 'cocoa', 'tea', 'sugar', 'sugarcane',
+            'oil', 'palm', 'sunflower', 'rapeseed', 'olive', 'coconut', 'groundnut',
+            'cattle', 'pigs', 'sheep', 'goats', 'buffaloes'
+        ]
+        
+        potential_items = []
+        for item in food_items:
+            if item in query_lower:
+                potential_items.append(item.title())  # Capitalize for matching
         
         # Extract potential elements (measurement types)
         element_indicators = ['production', 'use', 'usage', 'consumption', 'trade', 'import', 'export', 'area', 'yield', 'price']
@@ -499,7 +421,8 @@ class NaturalLanguageQueryEngine:
     def _execute_query(self, parsed_query: Dict[str, Any], original_query: str) -> Dict[str, Any]:
         """Execute the parsed query on the dataset - FIXED implementation."""
         try:
-            if not self.current_dataset_df or self.current_dataset_df.empty:
+            # FIXED: Use .empty property instead of boolean evaluation
+            if self.current_dataset_df is None or self.current_dataset_df.empty:
                 return {"error": "No dataset available for analysis"}
             
             df = self.current_dataset_df.copy()
@@ -535,109 +458,63 @@ class NaturalLanguageQueryEngine:
                 filtered_df = filtered_df[filtered_df['Element'].isin(parsed_query['elements'])]
                 logger.info(f"Applied elements filter: {parsed_query['elements']}, remaining rows: {len(filtered_df)}")
             
+            # FIXED: Check if filtered_df is empty using .empty property
             if filtered_df.empty:
                 return {
                     "error": "No data found matching the query criteria",
                     "filtered_rows": 0,
-                    "total_rows": len(df)
+                    "debug_info": parsed_query.get('debug_info', {})
                 }
             
-            # Determine query type and generate appropriate analysis
+            # Route to appropriate query handler based on query type
             query_type = parsed_query.get('query_type', 'general_query')
             
-            if query_type == 'ranking_comparison':
+            if query_type in ['ranking_comparison', 'comparison']:
                 return self._execute_ranking_query(filtered_df, original_query, parsed_query)
-            elif query_type == 'time_series':
+            elif query_type in ['time_series', 'trend']:
                 return self._execute_trend_query(filtered_df, original_query, parsed_query)
-            elif query_type == 'statistical_analysis':
+            elif query_type in ['statistical_analysis', 'statistical']:
                 return self._execute_statistical_query(filtered_df, original_query, parsed_query)
             else:
                 return self._execute_general_query(filtered_df, original_query, parsed_query)
                 
         except Exception as e:
-            logger.error(f"Error executing query: {e}")
+            logger.error(f"Error executing query: {str(e)}")
             return {"error": f"Query execution failed: {str(e)}"}
     
     def _execute_ranking_query(self, df: pd.DataFrame, query: str, parsed_query: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a ranking/comparison query - FIXED implementation."""
+        """Execute a ranking/comparison query."""
         try:
             if 'Value' not in df.columns:
-                return {"error": "No Value column available for ranking"}
+                return {"error": "No Value column available for ranking analysis"}
             
-            # Group by Area (countries) and sum values
+            # Group by relevant dimensions for ranking
             if 'Area' in df.columns:
-                country_totals = df.groupby('Area')['Value'].sum().reset_index()
-                country_totals = country_totals.sort_values('Value', ascending=False)
-                
-                # Get top performers (limit to prevent too much data)
-                top_countries = country_totals.head(10)
-                
-                # Calculate statistics
-                stats = {
-                    'total_countries': len(country_totals),
-                    'global_total': float(country_totals['Value'].sum()),
-                    'average': float(country_totals['Value'].mean()),
-                    'median': float(country_totals['Value'].median())
-                }
-                
+                ranking = df.groupby('Area')['Value'].sum().sort_values(ascending=False)
                 return {
                     "type": "ranking",
-                    "top_10": dict(zip(top_countries['Area'], top_countries['Value'])),
-                    "data_summary": {
-                        "total_entities": len(country_totals),
-                        "highest": {
-                            "name": top_countries.iloc[0]['Area'],
-                            "value": float(top_countries.iloc[0]['Value'])
-                        },
-                        "average": stats['average']
-                    },
-                    "filtered_rows": len(df),
-                    "query_info": parsed_query
+                    "ranking_data": ranking.head(10).to_dict(),
+                    "filtered_rows": len(df)
                 }
             else:
-                return {"error": "No Area column available for country ranking"}
+                return {"error": "No suitable columns found for ranking"}
                 
         except Exception as e:
             logger.error(f"Error in ranking query: {e}")
             return {"error": f"Ranking analysis failed: {str(e)}"}
     
     def _execute_trend_query(self, df: pd.DataFrame, query: str, parsed_query: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a trend/time series query."""
+        """Execute a time series/trend query."""
         try:
             if 'Year' not in df.columns or 'Value' not in df.columns:
                 return {"error": "No Year or Value columns available for trend analysis"}
             
-            # Group by year and sum values
-            yearly_data = df.groupby('Year')['Value'].sum().reset_index()
-            yearly_data = yearly_data.sort_values('Year')
-            
-            if len(yearly_data) < 2:
-                return {"error": "Need at least 2 years of data for trend analysis"}
-            
-            # Calculate trend statistics
-            first_year = yearly_data.iloc[0]
-            last_year = yearly_data.iloc[-1]
-            
-            total_change = last_year['Value'] - first_year['Value']
-            percent_change = (total_change / first_year['Value']) * 100 if first_year['Value'] != 0 else 0
-            
-            # Calculate CAGR if multiple years
-            years_diff = last_year['Year'] - first_year['Year']
-            cagr = 0
-            if years_diff > 0 and first_year['Value'] > 0:
-                cagr = (((last_year['Value'] / first_year['Value']) ** (1 / years_diff)) - 1) * 100
+            # Calculate trend over time
+            trend_data = df.groupby('Year')['Value'].sum().sort_index()
             
             return {
                 "type": "trend",
-                "time_series": yearly_data.set_index('Year')['Value'].to_dict(),
-                "trend_summary": {
-                    "first_year": int(first_year['Year']),
-                    "last_year": int(last_year['Year']),
-                    "first_value": float(first_year['Value']),
-                    "last_value": float(last_year['Value']),
-                    "total_change_percent": float(percent_change),
-                    "cagr_percent": float(cagr)
-                },
+                "trend_data": trend_data.to_dict(),
                 "filtered_rows": len(df)
             }
             
@@ -716,262 +593,119 @@ class NaturalLanguageQueryEngine:
             if "error" in result:
                 return f"I couldn't process your query: {result['error']}"
             
+            response_parts = []
+            
+            # Handle different result types
             result_type = result.get("type", "unknown")
             
             if result_type == "ranking":
-                return self._generate_ranking_response(query, result)
+                response_parts.append("Here are the ranking results:")
+                ranking_data = result.get("ranking_data", {})
+                for i, (item, value) in enumerate(list(ranking_data.items())[:5], 1):
+                    response_parts.append(f"{i}. {item}: {value:,.0f}")
+            
             elif result_type == "trend":
-                return self._generate_trend_response(query, result)
+                response_parts.append("Here's the trend analysis:")
+                trend_data = result.get("trend_data", {})
+                if len(trend_data) > 1:
+                    years = sorted(trend_data.keys())
+                    start_val = trend_data[years[0]]
+                    end_val = trend_data[years[-1]]
+                    change = ((end_val - start_val) / start_val * 100) if start_val != 0 else 0
+                    response_parts.append(f"From {years[0]} to {years[-1]}, values changed by {change:.1f}%")
+            
             elif result_type == "statistical":
-                return self._generate_statistical_response(query, result)
+                response_parts.append("Here's the statistical summary:")
+                stats = result.get("statistics", {})
+                response_parts.append(f"Total records: {stats.get('count', 0):,}")
+                response_parts.append(f"Average: {stats.get('mean', 0):,.1f}")
+                response_parts.append(f"Range: {stats.get('min', 0):,.0f} to {stats.get('max', 0):,.0f}")
+            
             elif result_type == "factual":
-                return self._generate_factual_response(query, result)
+                response_parts.append("Here's an overview of the data:")
+                overview = result.get("data_overview", {})
+                response_parts.append(f"Total records: {overview.get('total_records', 0):,}")
+                if 'countries_covered' in overview:
+                    response_parts.append(f"Countries covered: {overview['countries_covered']}")
+                if 'date_range' in overview:
+                    date_range = overview['date_range']
+                    response_parts.append(f"Years: {date_range['start']} - {date_range['end']}")
+            
             else:
-                return "I processed your query but couldn't generate a specific response format."
-                
-        except Exception as e:
-            logger.error(f"Error generating response: {e}")
-            return "I encountered an error while generating the response."
-    
-    def _generate_ranking_response(self, query: str, result: Dict[str, Any]) -> str:
-        """Generate response for ranking queries - FIXED formatting."""
-        try:
-            top_10 = result.get("top_10", {})
-            data_summary = result.get("data_summary", {})
+                response_parts.append("Analysis completed successfully.")
+                if 'filtered_rows' in result:
+                    response_parts.append(f"Found {result['filtered_rows']:,} matching records.")
             
-            if not top_10:
-                return "No ranking data was found for your query."
-            
-            # Get top 5 for response
-            top_5_items = list(top_10.items())[:5]
-            
-            response_parts = []
-            
-            # Add context about the query
-            if "nitrogen" in query.lower() and "2022" in query:
-                response_parts.append("Based on the nitrogen fertilizer data for 2022, here are the top users:")
-            elif "fertilizer" in query.lower():
-                response_parts.append("Based on the fertilizer data, here are the top countries:")
-            else:
-                response_parts.append("Based on your query, here are the top performers:")
-            
-            # List top 5
-            response_parts.append("\n**Top 5:**")
-            for i, (country, value) in enumerate(top_5_items, 1):
-                # Format large numbers nicely
-                if value >= 1_000_000:
-                    formatted_value = f"{value/1_000_000:.1f}M"
-                elif value >= 1_000:
-                    formatted_value = f"{value/1_000:.1f}K" 
-                else:
-                    formatted_value = f"{value:.1f}"
-                response_parts.append(f"{i}. **{country}**: {formatted_value}")
-            
-            # Add summary statistics
-            if data_summary:
-                highest = data_summary.get("highest", {})
-                if highest:
-                    highest_val = highest.get('value', 0)
-                    if highest_val >= 1_000_000:
-                        formatted_highest = f"{highest_val/1_000_000:.1f}M"
-                    elif highest_val >= 1_000:
-                        formatted_highest = f"{highest_val/1_000:.1f}K"
-                    else:
-                        formatted_highest = f"{highest_val:.1f}"
-                    response_parts.append(f"\n📊 **Leading country**: {highest.get('name')} with {formatted_highest}")
-                
-                total_entities = data_summary.get("total_entities", 0)
-                if total_entities > 0:
-                    response_parts.append(f"🌍 **Countries analyzed**: {total_entities}")
-            
-            return "\n".join(response_parts)
+            return " ".join(response_parts)
             
         except Exception as e:
-            logger.error(f"Error generating ranking response: {e}")
-            return "Found ranking data but couldn't format the response properly."
+            logger.error(f"Error generating response: {str(e)}")
+            return f"Analysis completed, but I had trouble summarizing the results: {str(e)}"
     
-    def _generate_trend_response(self, query: str, result: Dict[str, Any]) -> str:
-        """Generate response for trend queries."""
-        try:
-            trend_summary = result.get("trend_summary", {})
-            
-            if not trend_summary:
-                return "No trend data was found for your query."
-            
-            response_parts = []
-            response_parts.append("Here's the trend analysis for your query:")
-            
-            # Time period
-            first_year = trend_summary.get("first_year")
-            last_year = trend_summary.get("last_year")
-            if first_year and last_year:
-                response_parts.append(f"\n📅 **Period**: {first_year} - {last_year}")
-            
-            # Overall change
-            total_change = trend_summary.get("total_change_percent", 0)
-            if total_change != 0:
-                direction = "increased" if total_change > 0 else "decreased"
-                response_parts.append(f"📈 **Overall change**: {direction} by {abs(total_change):.1f}%")
-            
-            # Growth rates
-            cagr = trend_summary.get("cagr_percent", 0)
-            if abs(cagr) > 0.1:
-                response_parts.append(f"📊 **Compound Annual Growth Rate**: {cagr:+.1f}%")
-            
-            # Values
-            first_value = trend_summary.get("first_value", 0)
-            last_value = trend_summary.get("last_value", 0)
-            if first_value and last_value:
-                response_parts.append(f"🔢 **Values**: {first_value:,.0f} → {last_value:,.0f}")
-            
-            return "\n".join(response_parts)
-            
-        except Exception as e:
-            logger.error(f"Error generating trend response: {e}")
-            return "Found trend data but couldn't format the response properly."
-    
-    def _generate_statistical_response(self, query: str, result: Dict[str, Any]) -> str:
-        """Generate response for statistical queries."""
-        try:
-            stats = result.get("statistics", {})
-            
-            if not stats:
-                return "No statistical data was found for your query."
-            
-            response_parts = []
-            response_parts.append("Here are the statistical insights for your query:")
-            
-            # Basic statistics
-            count = stats.get("count", 0)
-            mean_val = stats.get("mean", 0)
-            median_val = stats.get("median", 0)
-            
-            response_parts.append(f"\n📊 **Dataset size**: {count:,} records")
-            
-            if mean_val > 0:
-                response_parts.append(f"📈 **Average value**: {mean_val:,.1f}")
-            
-            if median_val > 0:
-                response_parts.append(f"📊 **Median value**: {median_val:,.1f}")
-            
-            # Range
-            min_val = stats.get("min", 0)
-            max_val = stats.get("max", 0)
-            if min_val != max_val:
-                response_parts.append(f"📏 **Range**: {min_val:,.1f} - {max_val:,.1f}")
-            
-            return "\n".join(response_parts)
-            
-        except Exception as e:
-            logger.error(f"Error generating statistical response: {e}")
-            return "Found statistical data but couldn't format the response properly."
-    
-    def _generate_factual_response(self, query: str, result: Dict[str, Any]) -> str:
-        """Generate response for factual/overview queries."""
-        try:
-            overview = result.get("data_overview", {})
-            
-            if not overview:
-                return "No overview data was found for your query."
-            
-            response_parts = []
-            response_parts.append("Here's what I found in the data:")
-            
-            # Basic dataset info
-            total_records = overview.get("total_records", 0)
-            response_parts.append(f"\n📊 **Total records**: {total_records:,}")
-            
-            # Geographic coverage
-            countries_covered = overview.get("countries_covered")
-            if countries_covered:
-                response_parts.append(f"🌍 **Countries covered**: {countries_covered}")
-            
-            # Items coverage
-            items_covered = overview.get("items_covered")
-            if items_covered:
-                response_parts.append(f"📦 **Items/commodities**: {items_covered}")
-            
-            # Date range
-            date_range = overview.get("date_range")
-            if date_range:
-                start = date_range.get("start")
-                end = date_range.get("end")
-                response_parts.append(f"📅 **Time period**: {start} - {end}")
-            
-            # Top countries
-            top_countries = overview.get("top_countries")
-            if top_countries:
-                top_3 = list(top_countries.items())[:3]
-                response_parts.append(f"🏆 **Most represented countries**: {', '.join([country for country, _ in top_3])}")
-            
-            return "\n".join(response_parts)
-            
-        except Exception as e:
-            logger.error(f"Error generating factual response: {e}")
-            return "Found overview data but couldn't format the response properly."
-    
-    def set_current_dataset(self, dataset_code: str, dataset_df: Optional[pd.DataFrame] = None):
+    def set_current_dataset(self, dataset_code: str) -> bool:
         """Set the current dataset for queries."""
-        self.current_dataset = dataset_code
-        self.current_dataset_df = dataset_df
-        
-        # Cache dataset metadata if not already cached
-        if dataset_code not in self.dataset_cache and dataset_df is not None:
-            try:
-                self.dataset_cache[dataset_code] = {
-                    'unique_area': dataset_df['Area'].unique().tolist() if 'Area' in dataset_df.columns else [],
-                    'unique_item': dataset_df['Item'].unique().tolist() if 'Item' in dataset_df.columns else [],
-                    'unique_element': dataset_df['Element'].unique().tolist() if 'Element' in dataset_df.columns else [],
-                    'columns': dataset_df.columns.tolist(),
-                    'shape': dataset_df.shape
+        try:
+            # Load dataset if not already cached
+            if dataset_code not in self.dataset_cache:
+                df = self.faostat_service.get_dataset_data(dataset_code)
+                if df is None or df.empty:
+                    logger.error(f"Failed to load dataset {dataset_code}")
+                    return False
+                
+                # Create dataset context for intelligent matching
+                context = {
+                    'dataset_code': dataset_code,
+                    'unique_area': df['Area'].unique().tolist() if 'Area' in df.columns else [],
+                    'unique_item': df['Item'].unique().tolist() if 'Item' in df.columns else [],
+                    'unique_element': df['Element'].unique().tolist() if 'Element' in df.columns else [],
+                    'year_range': (int(df['Year'].min()), int(df['Year'].max())) if 'Year' in df.columns else None,
+                    'total_records': len(df)
                 }
-            except Exception as e:
-                logger.warning(f"Could not cache dataset metadata: {e}")
+                
+                self.dataset_cache[dataset_code] = context
+                self.current_dataset_df = df
+            
+            self.current_dataset = dataset_code
+            logger.info(f"Set current dataset to {dataset_code}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error setting dataset {dataset_code}: {str(e)}")
+            return False
     
-    def _add_to_context(self, query: str):
+    def _add_to_context(self, query: str) -> None:
         """Add query to context history."""
+        timestamp = datetime.now().isoformat()
         self.context_history.append({
-            'query': query,
-            'timestamp': datetime.now()
+            "query": query,
+            "timestamp": timestamp
         })
         
         # Keep only recent context
         if len(self.context_history) > self.max_context_history:
             self.context_history = self.context_history[-self.max_context_history:]
     
-    def clear_context(self):
+    def get_context_summary(self) -> str:
+        """Get a summary of recent queries for context."""
+        if not self.context_history:
+            return "No recent queries."
+        
+        recent_queries = [item["query"] for item in self.context_history[-3:]]
+        return f"Recent queries: {'; '.join(recent_queries)}"
+    
+    def clear_context(self) -> None:
         """Clear the context history."""
         self.context_history = []
+        logger.info("Cleared context history")
     
-    def get_context_summary(self) -> Dict[str, Any]:
-        """Get a summary of the current context."""
+    def get_dataset_info(self) -> Dict[str, Any]:
+        """Get information about the current dataset."""
+        if not self.current_dataset:
+            return {"error": "No dataset selected"}
+        
+        context = self.dataset_cache.get(self.current_dataset, {})
         return {
-            'current_dataset': self.current_dataset,
-            'context_history_length': len(self.context_history),
-            'recent_queries': [item['query'] for item in self.context_history[-3:]]
+            "dataset_code": self.current_dataset,
+            "context": context,
+            "has_data": self.current_dataset_df is not None and not self.current_dataset_df.empty
         }
-    
-    def get_suggested_queries(self, dataset_code: Optional[str] = None) -> List[str]:
-        """Get suggested queries for the current or specified dataset."""
-        suggestions = [
-            "What are the top 10 countries by total value?",
-            "Show me trends over the last 10 years",
-            "Which items have the highest values?",
-            "Compare values between regions",
-            "What is the average value across all countries?"
-        ]
-        
-        # Add dataset-specific suggestions based on cached metadata
-        dataset_context = self.dataset_cache.get(dataset_code or self.current_dataset, {})
-        
-        if 'unique_item' in dataset_context:
-            items = dataset_context['unique_item'][:3]
-            for item in items:
-                suggestions.append(f"What are the trends for {item}?")
-        
-        if 'unique_element' in dataset_context:
-            elements = dataset_context['unique_element'][:2]
-            for element in elements:
-                suggestions.append(f"Which countries have the highest {element.lower()}?")
-        
-        return suggestions[:8]  # Return max 8 suggestions
