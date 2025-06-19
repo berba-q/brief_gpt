@@ -2,7 +2,8 @@
 Prompt templates for OpenAI service.
 
 This module provides functions for generating consistent prompt templates
-for various use cases in the FAOSTAT Analytics Application.
+for various use cases in the FAOSTAT Analytics Application with enhanced
+dataset theme detection.
 """
 
 import json
@@ -11,21 +12,38 @@ from typing import Dict, List, Any, Optional
 def get_insights_prompt(
     dataset_name: str,
     summary_stats: Dict[str, Any],
-    figures_descriptions: List[str]
+    figures_descriptions: List[str],
+    dataset_metadata: Optional[Dict[str, Any]] = None
 ) -> str:
     """
-    Generate a prompt for dataset insights.
+    Generate a prompt for dataset insights with theme detection.
     
     Args:
         dataset_name: Name of the dataset
         summary_stats: Summary statistics of the dataset
         figures_descriptions: List of figure descriptions
+        dataset_metadata: Original FAOSTAT metadata for theme detection
         
     Returns:
         str: Formatted prompt
     """
+    
+    # Detect dataset theme from metadata
+    dataset_theme = detect_dataset_theme(dataset_metadata, dataset_name)
+    
+    # Create the expected JSON structure as a string (not f-string)
+    expected_json_structure = """{
+  "highlights": ["point 1", "point 2", "point 3", "point 4"],
+  "background": "text...",
+  "global_trends": "text...",
+  "regional_analysis": "text...",
+  "explanatory_notes": "text..."
+}"""
+    
     prompt = f"""You are an expert agricultural data analyst at the FAO (Food and Agriculture Organization). 
 Your task is to write an analytical brief based on the following FAOSTAT dataset: "{dataset_name}".
+
+DATASET THEME: {dataset_theme}
 
 Here's a summary of the dataset and analysis:
 {json.dumps(summary_stats, indent=2)}
@@ -33,23 +51,120 @@ Here's a summary of the dataset and analysis:
 The analysis includes the following figures:
 {json.dumps(figures_descriptions, indent=2)}
 
-Please generate the following sections for an analytical brief:
-1. HIGHLIGHTS: 3-4 bullet points highlighting the most important findings (keep each highlight under 50 words)
-2. BACKGROUND: A brief introduction to the dataset and its context (100-150 words)
-3. GLOBAL TRENDS: Analysis of the global trends shown in the data (150-200 words)
-4. REGIONAL ANALYSIS: Comparison between regions or countries (150-200 words)
+Please generate the following sections for an analytical brief focused on {dataset_theme}:
+
+1. HIGHLIGHTS: 3-4 bullet points highlighting the most important findings related to {dataset_theme} (keep each highlight under 50 words)
+2. BACKGROUND: A brief introduction to the dataset and its context in {dataset_theme} (100-150 words)
+3. GLOBAL TRENDS: Analysis of the global trends shown in the data related to {dataset_theme} (150-200 words)
+4. REGIONAL ANALYSIS: Comparison between regions or countries in the context of {dataset_theme} (150-200 words)
 5. EXPLANATORY NOTES: Any technical notes or data limitations to be aware of (100 words)
 
 Format your response as JSON with the following structure:
-{
-  "highlights": ["point 1", "point 2", "point 3", "point 4"],
-  "background": "text...",
-  "global_trends": "text...",
-  "regional_analysis": "text...",
-  "explanatory_notes": "text..."
-}
+{expected_json_structure}
+
+Ensure your analysis is specifically tailored to {dataset_theme} and uses appropriate terminology for this domain.
 """
     return prompt
+
+def detect_dataset_theme(metadata: Optional[Dict[str, Any]], dataset_name: str) -> str:
+    """
+    Detect the theme/domain of a dataset from FAOSTAT metadata.
+    
+    Args:
+        metadata: Original FAOSTAT dataset metadata
+        dataset_name: Name of the dataset
+        
+    Returns:
+        str: Detected theme
+    """
+    
+    if not metadata:
+        return _fallback_theme_detection(dataset_name)
+    
+    # Extract relevant fields for theme detection
+    dataset_code = metadata.get('DatasetCode', '')
+    description = metadata.get('DatasetDescription', '').lower()
+    topic = metadata.get('Topic', '').lower()
+    dataset_name_lower = dataset_name.lower()
+    
+    # Theme detection rules based on FAOSTAT patterns
+    theme_keywords = {
+        'production and crops': [
+            'crop', 'production', 'yield', 'harvest', 'agricultural production',
+            'livestock', 'animal production', 'aquaculture', 'forestry'
+        ],
+        'trade and markets': [
+            'trade', 'import', 'export', 'market', 'price', 'value', 'quantity traded'
+        ],
+        'food security and nutrition': [
+            'food security', 'nutrition', 'food balance', 'dietary', 'undernourishment',
+            'calorie', 'protein', 'food supply', 'availability'
+        ],
+        'environment and sustainability': [
+            'emission', 'greenhouse gas', 'climate', 'environmental', 'sustainability',
+            'carbon', 'land use', 'deforestation', 'biodiversity'
+        ],
+        'inputs and resources': [
+            'fertilizer', 'pesticide', 'machinery', 'irrigation', 'land', 'water',
+            'input', 'resource', 'technology'
+        ],
+        'population and demographics': [
+            'population', 'demographic', 'rural', 'urban', 'employment', 'labor'
+        ],
+        'economic indicators': [
+            'economic', 'gdp', 'income', 'poverty', 'investment', 'expenditure'
+        ]
+    }
+    
+    # Check dataset code patterns (FAOSTAT uses specific codes)
+    code_themes = {
+        'production and crops': ['QCL', 'QA', 'QP', 'QL', 'QV'],
+        'trade and markets': ['TCL', 'TM', 'TP', 'PP'],
+        'food security and nutrition': ['FBS', 'FS', 'FB'],
+        'environment and sustainability': ['GT', 'GE', 'EF', 'EE', 'EL', 'EN'],
+        'inputs and resources': ['RFN', 'RP', 'RI', 'RL', 'RT'],
+        'population and demographics': ['OA', 'IC'],
+        'economic indicators': ['IC', 'IG']
+    }
+    
+    # First check dataset code
+    for theme, codes in code_themes.items():
+        if any(dataset_code.startswith(code) for code in codes):
+            return theme
+    
+    # Then check keywords in description and topic
+    combined_text = f"{description} {topic} {dataset_name_lower}"
+    
+    theme_scores = {}
+    for theme, keywords in theme_keywords.items():
+        score = sum(1 for keyword in keywords if keyword in combined_text)
+        if score > 0:
+            theme_scores[theme] = score
+    
+    # Return theme with highest score
+    if theme_scores:
+        return max(theme_scores, key=theme_scores.get)
+    
+    # Fallback to dataset name analysis
+    return _fallback_theme_detection(dataset_name)
+
+def _fallback_theme_detection(dataset_name: str) -> str:
+    """Fallback theme detection based on dataset name."""
+    
+    name_lower = dataset_name.lower()
+    
+    if any(word in name_lower for word in ['crop', 'livestock', 'production', 'yield']):
+        return 'production and crops'
+    elif any(word in name_lower for word in ['trade', 'import', 'export']):
+        return 'trade and markets'
+    elif any(word in name_lower for word in ['food', 'nutrition', 'security']):
+        return 'food security and nutrition'
+    elif any(word in name_lower for word in ['emission', 'environment', 'climate']):
+        return 'environment and sustainability'
+    elif any(word in name_lower for word in ['fertilizer', 'input', 'resource']):
+        return 'inputs and resources'
+    else:
+        return 'agricultural data analysis'
 
 def get_interactive_analysis_prompt(
     question: str,

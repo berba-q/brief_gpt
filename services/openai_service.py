@@ -3,7 +3,7 @@ OpenAI service for integrating with GPT models.
 
 This module provides a service class for interacting with OpenAI's API,
 generating insights, and handling various prompt-based tasks while
-implementing cost-saving strategies.
+implementing cost-saving strategies and dataset theme detection.
 """
 
 import openai
@@ -226,7 +226,8 @@ class OpenAIService:
         dataset_name: str,
         summary_stats: Dict[str, Any],
         figures_descriptions: List[str],
-        model_type: str = "comprehensive"
+        model_type: str = "comprehensive",
+        dataset_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Generate insights for an analytical brief using GPT.
@@ -236,6 +237,7 @@ class OpenAIService:
             summary_stats: Summary statistics of the dataset
             figures_descriptions: List of figure descriptions
             model_type: Type of model to use (comprehensive or standard)
+            dataset_metadata: Original FAOSTAT metadata for theme detection
             
         Returns:
             dict: Generated insights and narrative sections
@@ -251,8 +253,13 @@ class OpenAIService:
                 max_tokens = self.max_tokens
                 temperature = self.temperature
             
-            # Create prompt for the LLM
-            prompt = get_insights_prompt(dataset_name, summary_stats, figures_descriptions)
+            # Create prompt for the LLM with metadata support
+            prompt = get_insights_prompt(
+                dataset_name=dataset_name, 
+                summary_stats=summary_stats, 
+                figures_descriptions=figures_descriptions,
+                dataset_metadata=dataset_metadata
+            )
             
             # Create messages for the API call
             messages = [
@@ -280,16 +287,31 @@ class OpenAIService:
                     json_str = content.split("```")[1].split("```")[0]
                 
                 insights = json.loads(json_str)
-            except Exception as json_error:
+                
+                # Validate that we have the expected structure
+                expected_keys = ['highlights', 'background', 'global_trends', 'regional_analysis', 'explanatory_notes']
+                if not all(key in insights for key in expected_keys):
+                    logger.warning("Incomplete insights structure received from OpenAI")
+                    # Fill in missing keys
+                    for key in expected_keys:
+                        if key not in insights:
+                            insights[key] = f"Information not available for {key}"
+                
+            except json.JSONDecodeError as json_error:
                 logger.error(f"Error parsing JSON from OpenAI response: {str(json_error)}")
+                logger.error(f"Raw content: {content[:500]}...")
                 
                 # If JSON parsing fails, structure the content manually
                 insights = {
-                    "highlights": ["Unable to parse highlights from LLM response"],
-                    "background": content[:500],
-                    "global_trends": content[500:1000] if len(content) > 500 else "",
-                    "regional_analysis": content[1000:1500] if len(content) > 1000 else "",
-                    "explanatory_notes": "Note: There was an issue with the structured insight generation."
+                    "highlights": [
+                        "Generated analysis available but could not be structured properly",
+                        "Please review the raw analysis output",
+                        "JSON parsing error occurred during processing"
+                    ],
+                    "background": content[:500] + "..." if len(content) > 500 else content,
+                    "global_trends": "Please see background section for available analysis.",
+                    "regional_analysis": "Please see background section for available analysis.",
+                    "explanatory_notes": f"Note: There was an issue with structured insight generation. Raw response was {len(content)} characters."
                 }
             
             return insights
@@ -299,9 +321,9 @@ class OpenAIService:
             return {
                 "highlights": [f"Error generating insights: {str(e)}"],
                 "background": "An error occurred while generating insights with the LLM.",
-                "global_trends": "",
-                "regional_analysis": "",
-                "explanatory_notes": "There was an error in the LLM processing."
+                "global_trends": "Analysis could not be completed due to an error.",
+                "regional_analysis": "Analysis could not be completed due to an error.",
+                "explanatory_notes": f"Error details: {str(e)}"
             }
     
     def generate_interactive_analysis(

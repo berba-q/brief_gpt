@@ -1,14 +1,15 @@
 """
-Analysis page for the FAOSTAT Analytics application.
+Analysis page for the FAOSTAT Analytics application - UPDATED VERSION.
 
 This module provides the main analysis interface where users can filter data,
-generate visualizations, and create AI-powered insights.
+generate visualizations, and create AI-powered insights with improved metadata support.
 """
 
 import os
 import streamlit as st
 import pandas as pd
 import logging
+import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -74,6 +75,8 @@ def render_dataset_selection():
                             if st.button(f"Select", key=f"quick_{row['code']}"):
                                 st.session_state.current_dataset_code = row['code']
                                 st.session_state.current_dataset_name = row['name']
+                                # Store metadata for theme detection
+                                st.session_state.current_dataset_metadata = row.get('metadata', {})
                                 st.rerun()
         
         except Exception as e:
@@ -136,7 +139,7 @@ def load_dataset(dataset_code: str) -> Optional[pd.DataFrame]:
             if df is not None:
                 st.success(f"✅ Loaded {len(df):,} records")
                 
-                # Store metadata
+                # Store metadata for theme detection
                 st.session_state.current_dataset_metadata = metadata
                 
                 return df
@@ -539,21 +542,17 @@ def generate_ai_insights(filtered_df: pd.DataFrame, dataset_name: str, openai_se
             figures = st.session_state.get('current_figures', [])
             figure_descriptions = [fig.description for fig in figures]
             
+            # Get dataset metadata for theme detection
+            dataset_metadata = st.session_state.get('current_dataset_metadata', {})
+            
+            # Generate insights with metadata support
             insights = openai_service.generate_insights(
                 dataset_name=dataset_name,
                 summary_stats=summary_stats,
-                figures_descriptions=figure_descriptions
+                figures_descriptions=figure_descriptions,
+                dataset_metadata=dataset_metadata  # Pass metadata for theme detection
             )
-            # --- Patch: parse string JSON if needed ---
-            import json
-            if isinstance(insights, str):
-                try:
-                    insights = json.loads(insights)
-                except Exception as parse_err:
-                    logger.error(f"Failed to parse insights JSON in caller: {parse_err}")
-                    st.error("⚠️ AI returned an invalid response. Please try again.")
-                    return
-            # ------------------------------------------
+            
             # Store insights
             st.session_state.current_insights = insights
             
@@ -568,15 +567,16 @@ def display_existing_insights():
     
     insights = st.session_state.get('current_insights')
 
-    import json
-    if isinstance(insights, str):
-        try:
-            insights = json.loads(insights)
-        except Exception as e:
-            st.error(f"⚠️ Unable to parse insights: {e}")
-            return
-
     if insights:
+        # Handle both dict and string responses
+        if isinstance(insights, str):
+            try:
+                insights = json.loads(insights)
+            except Exception as e:
+                st.error(f"⚠️ Unable to parse insights: {e}")
+                st.text_area("Raw AI Response:", insights, height=300)
+                return
+
         # Highlights
         if 'highlights' in insights and insights['highlights']:
             st.markdown("#### ✨ Key Highlights")
