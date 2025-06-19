@@ -45,7 +45,7 @@ def show_query_interface(
     
     # Set current dataset in engine if provided
     if current_dataset and dataset_df is not None:
-        nl_engine.set_current_dataset(current_dataset, dataset_df)
+        nl_engine.set_current_dataset(current_dataset)
     
     # Main query interface
     st.subheader("🤖 Ask Questions About Your Data")

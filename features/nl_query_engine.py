@@ -647,7 +647,8 @@ class NaturalLanguageQueryEngine:
         try:
             # Load dataset if not already cached
             if dataset_code not in self.dataset_cache:
-                df = self.faostat_service.get_dataset_data(dataset_code)
+                # Use the correct method name and handle the tuple return
+                df, metadata = self.faostat_service.get_dataset(dataset_code)
                 if df is None or df.empty:
                     logger.error(f"Failed to load dataset {dataset_code}")
                     return False
