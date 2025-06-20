@@ -81,15 +81,7 @@ def initialize_services():
                 temperature=0.7
             )
             st.session_state.openai_service = openai_service
-            
-            # Initialize Brief Generator
-            brief_generator = BriefGeneratorService(
-                openai_service=openai_service,
-                faostat_service=faostat_service,
-                geography_service=geography_service,
-                viz_generator=viz_generator
-            )
-            st.session_state.brief_generator = brief_generator
+            st.session_state.brief_generator = "available"  # Flag that we can generate briefs
             
         else:
             st.session_state.openai_service = None
@@ -167,26 +159,52 @@ def create_sidebar():
             if st.button("🔄 Change Dataset"):
                 st.session_state.current_step = 'dataset_selection'
                 st.session_state.selected_dataset = None
-                st.session_state.analysis_config = {}
+                st.session_state.brief_config = {}  # Changed from analysis_config
                 st.session_state.generated_brief = None
                 st.rerun()
         
         st.divider()
         
-        # OpenAI API Key input
+        # OpenAI API Key input (copied from working sidebar.py)
         if not st.session_state.get('openai_service'):
             st.markdown("### 🔑 OpenAI API Key")
+            
+            current_key = st.session_state.get('openai_api_key', '')
             api_key = st.text_input(
                 "Enter API Key",
+                value=current_key,
                 type="password",
-                help="Required for AI-powered brief generation"
+                help="Required for AI-powered brief generation",
+                key="openai_key_input"
             )
             
-            if api_key and api_key != st.session_state.get('openai_api_key'):
+            # Check if key changed and reinitialize services
+            if api_key != current_key:
                 st.session_state.openai_api_key = api_key
-                # Reinitialize services
-                st.session_state.services_initialized = False
-                st.rerun()
+                # Reinitialize OpenAI service when key changes
+                if api_key:
+                    try:
+                        from services.openai_service import OpenAIService
+                        
+                        config = st.session_state.get('config')
+                        if config:
+                            openai_service = OpenAIService(
+                                api_key=api_key,
+                                model='gpt-4',
+                                max_tokens=2000,
+                                temperature=0.7
+                            )
+                            st.session_state.openai_service = openai_service
+                            st.session_state.brief_generator = "available"  # Flag that we can generate briefs
+                            
+                            st.success("✅ OpenAI service initialized!")
+                            st.rerun()  # Refresh to update the UI
+                    except Exception as e:
+                        st.error(f"Error initializing OpenAI: {str(e)}")
+                else:
+                    # Clear services if no key
+                    st.session_state.openai_service = None
+                    st.session_state.brief_generator = None
         else:
             st.success("🤖 AI Services Active")
 
@@ -226,11 +244,13 @@ def show_dataset_selection():
             if search_term:
                 filtered_datasets = [
                     d for d in datasets_list 
-                    if search_term.lower() in d.get('DatasetName', '').lower() or 
-                       search_term.lower() in d.get('DatasetCode', '').lower()
+                    if d.get('DatasetCode') and  # Skip datasets without codes
+                    (search_term.lower() in d.get('DatasetName', '').lower() or 
+                     search_term.lower() in d.get('DatasetCode', '').lower())
                 ]
             else:
-                filtered_datasets = datasets_list
+                # Skip datasets without codes
+                filtered_datasets = [d for d in datasets_list if d.get('DatasetCode')]
             
             # Display datasets
             if filtered_datasets:
@@ -248,7 +268,9 @@ def show_dataset_selection():
                                 st.markdown(f"**Last Updated:** {dataset.get('DateUpdate')}")
                         
                         with col_b:
-                            if st.button(f"Select", key=f"select_{dataset.get('DatasetCode')}"):
+                            # Create unique key using index to avoid conflicts
+                            dataset_code = dataset.get('DatasetCode', f'unknown_{i}')
+                            if st.button(f"Select", key=f"select_{dataset_code}_{i}"):
                                 st.session_state.selected_dataset = {
                                     'code': dataset.get('DatasetCode'),
                                     'name': dataset.get('DatasetName'),
@@ -273,15 +295,15 @@ def show_dataset_selection():
             ]
             
             st.markdown("**Popular Datasets:**")
-            for code in popular_datasets:
-                matching_dataset = next((d for d in datasets_list if d.get('DatasetCode') == code), None)
+            for i, code in enumerate(popular_datasets):
+                matching_dataset = next((d for d in datasets_list if d.get('code') == code), None)
                 if matching_dataset:
-                    if st.button(f"📊 {code}", key=f"quick_{code}", use_container_width=True):
+                    if st.button(f"📊 {code}", key=f"quick_{code}_{i}", use_container_width=True):
                         st.session_state.selected_dataset = {
-                            'code': matching_dataset.get('DatasetCode'),
-                            'name': matching_dataset.get('DatasetName'),
-                            'description': matching_dataset.get('DatasetDescription', ''),
-                            'last_updated': matching_dataset.get('DateUpdate', '')
+                            'code': matching_dataset.get('code'),
+                            'name': matching_dataset.get('name'),
+                            'description': matching_dataset.get('description', ''),
+                            'last_updated': matching_dataset.get('last_updated', '')
                         }
                         st.session_state.current_step = 'configuration'
                         st.rerun()
@@ -315,7 +337,7 @@ def show_configuration():
         st.success(f"✅ Dataset loaded: {len(df):,} rows")
         
         # Configuration form
-        with st.form("analysis_config"):
+        with st.form("brief_config_form"):  # Changed from "analysis_config" to avoid conflict
             
             col1, col2 = st.columns(2)
             
@@ -427,7 +449,8 @@ def show_configuration():
             
             # Submit configuration
             if st.form_submit_button("🚀 Generate Brief", use_container_width=True):
-                config = {
+                # Create config dictionary without conflicting with session state keys
+                analysis_config = {
                     'year_range': year_range,
                     'selected_items': selected_items,
                     'selected_areas': selected_areas,
@@ -437,7 +460,8 @@ def show_configuration():
                     'dataset_metadata': metadata
                 }
                 
-                st.session_state.analysis_config = config
+                # Store in session state with a different key
+                st.session_state.brief_config = analysis_config
                 st.session_state.current_step = 'brief_generation'
                 st.rerun()
     
@@ -448,11 +472,11 @@ def show_brief_generation():
     """Show brief generation page."""
     st.title("📝 Brief Generation")
     
-    if not st.session_state.get('analysis_config'):
+    if not st.session_state.get('brief_config'):  # Changed from analysis_config
         st.warning("Please configure analysis first")
         return
     
-    config = st.session_state.analysis_config
+    config = st.session_state.brief_config  # Changed from analysis_config
     dataset = st.session_state.selected_dataset
     
     st.info(f"Generating analytical brief for: **{dataset['name']}**")
@@ -600,7 +624,7 @@ def show_export():
     if st.button("🔄 Start New Analysis", use_container_width=True):
         st.session_state.current_step = 'dataset_selection'
         st.session_state.selected_dataset = None
-        st.session_state.analysis_config = {}
+        st.session_state.brief_config = {}  # Changed from analysis_config
         st.session_state.generated_brief = None
         st.rerun()
 
