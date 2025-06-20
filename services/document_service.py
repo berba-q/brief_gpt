@@ -1,363 +1,560 @@
 """
-Document service for generating Word documents and coordinating document generation.
+Export Service for generating documents and data exports.
 
-This module provides functionality to create Word documents and coordinate
-between different document generation services (PDF, Word, etc.).
+This service handles the creation of:
+- PDF documents in FAO analytical brief format
+- Word documents with editable content
+- Excel files with figure data sheets (fig1_data, fig2_data, etc.)
 """
 
-import os
 import logging
+import os
+import pandas as pd
+from typing import Dict, List, Any, Optional
 from datetime import datetime
-from typing import Dict, List, Optional, Any
 from pathlib import Path
+
+# Document generation imports
+try:
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
 
 try:
     from docx import Document
-    from docx.shared import Inches, Pt
+    from docx.shared import Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.enum.style import WD_STYLE_TYPE
-    from docx.oxml.shared import OxmlElement, qn
-    PYTHON_DOCX_AVAILABLE = True
+    DOCX_AVAILABLE = True
 except ImportError:
-    PYTHON_DOCX_AVAILABLE = False
+    DOCX_AVAILABLE = False
 
-from config.config_manager import ConfigManager
-from models.data_models import AnalysisResults, VisualizationInfo
-from services.pdf_service import PDFService
-
-# Set up logger
 logger = logging.getLogger(__name__)
 
-class DocumentService:
-    """
-    Service for coordinating document generation and creating Word documents.
+class ExportService:
+    """Service for exporting analytical briefs to various formats."""
     
-    This service coordinates between different document generation services
-    and provides Word document generation capabilities.
-    """
-    
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config):
         """
-        Initialize the document service.
+        Initialize export service.
         
         Args:
-            config_manager: Configuration manager instance
+            config: Configuration manager instance
         """
-        self.config_manager = config_manager
-        self.output_dir = os.path.join(config_manager.get_output_directory(), "reports")
+        self.config = config
+        self.output_dir = Path(config.get_output_directory()) / "exports"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create output directory
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # Initialize PDF service
-        self.pdf_service = PDFService(self.output_dir)
-        
-        logger.info(f"Initialized document service with output directory: {self.output_dir}")
+        # Set up document styles for PDF
+        if REPORTLAB_AVAILABLE:
+            self.styles = getSampleStyleSheet()
+            self._setup_custom_styles()
     
-    def generate_brief(
-        self,
-        analysis_results: AnalysisResults,
-        insights: Dict[str, Any],
-        format_type: str = "pdf",
-        title: Optional[str] = None,
-        author: str = "FAOSTAT Analytics System"
-    ) -> str:
-        """
-        Generate an analytical brief in the specified format.
-        
-        Args:
-            analysis_results: Results from data analysis
-            insights: AI-generated insights and narrative
-            format_type: Format type ('pdf' or 'docx')
-            title: Custom title for the brief
-            author: Author name for the document
-            
-        Returns:
-            str: Path to the generated document
-        """
-        if format_type.lower() == "pdf":
-            return self.pdf_service.generate_brief(analysis_results, insights, title, author)
-        elif format_type.lower() == "docx":
-            return self.generate_word_brief(analysis_results, insights, title, author)
-        else:
-            raise ValueError(f"Unsupported format type: {format_type}")
-    
-    def generate_word_brief(
-        self,
-        analysis_results: AnalysisResults,
-        insights: Dict[str, Any],
-        title: Optional[str] = None,
-        author: str = "FAOSTAT Analytics System"
-    ) -> str:
-        """
-        Generate a Word document analytical brief.
-        
-        Args:
-            analysis_results: Results from data analysis
-            insights: AI-generated insights and narrative
-            title: Custom title for the brief
-            author: Author name for the document
-            
-        Returns:
-            str: Path to the generated Word document
-        """
-        if not PYTHON_DOCX_AVAILABLE:
-            raise ImportError("python-docx is required for Word document generation")
-        
-        # Generate filename
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        dataset_name = analysis_results.dataset_name.replace(' ', '_').replace('/', '_')
-        filename = f"FAOSTAT_Brief_{dataset_name}_{timestamp}.docx"
-        filepath = os.path.join(self.output_dir, filename)
-        
-        # Create document
-        doc = Document()
-        
-        # Set up styles
-        self._setup_word_styles(doc)
-        
-        # Add content
-        self._add_word_title_page(doc, analysis_results, title, author)
-        self._add_word_highlights(doc, insights)
-        self._add_word_background(doc, insights, analysis_results)
-        self._add_word_global_trends(doc, insights, analysis_results)
-        self._add_word_regional_analysis(doc, insights, analysis_results)
-        self._add_word_figures(doc, analysis_results.figures)
-        self._add_word_explanatory_notes(doc, insights)
-        
-        # Save document
-        doc.save(filepath)
-        
-        logger.info(f"Generated Word brief: {filepath}")
-        return filepath
-    
-    def _setup_word_styles(self, doc: Document):
-        """Set up custom styles for the Word document."""
-        styles = doc.styles
+    def _setup_custom_styles(self):
+        """Set up custom styles for PDF generation."""
         
         # Title style
-        if 'FAO Title' not in [style.name for style in styles]:
-            title_style = styles.add_style('FAO Title', WD_STYLE_TYPE.PARAGRAPH)
-            title_font = title_style.font
-            title_font.name = 'Calibri'
-            title_font.size = Pt(20)
-            title_font.bold = True
-            title_style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            title_style.paragraph_format.space_after = Pt(12)
+        self.styles.add(ParagraphStyle(
+            name='CustomTitle',
+            parent=self.styles['Title'],
+            fontSize=20,
+            spaceAfter=20,
+            textColor=colors.HexColor('#1f4e79'),
+            alignment=TA_CENTER
+        ))
         
-        # Heading 1 style
-        if 'FAO Heading 1' not in [style.name for style in styles]:
-            h1_style = styles.add_style('FAO Heading 1', WD_STYLE_TYPE.PARAGRAPH)
-            h1_font = h1_style.font
-            h1_font.name = 'Calibri'
-            h1_font.size = Pt(16)
-            h1_font.bold = True
-            h1_style.paragraph_format.space_before = Pt(12)
-            h1_style.paragraph_format.space_after = Pt(6)
-        
-        # Heading 2 style
-        if 'FAO Heading 2' not in [style.name for style in styles]:
-            h2_style = styles.add_style('FAO Heading 2', WD_STYLE_TYPE.PARAGRAPH)
-            h2_font = h2_style.font
-            h2_font.name = 'Calibri'
-            h2_font.size = Pt(14)
-            h2_font.bold = True
-            h2_style.paragraph_format.space_before = Pt(10)
-            h2_style.paragraph_format.space_after = Pt(4)
+        # Heading style
+        self.styles.add(ParagraphStyle(
+            name='CustomHeading',
+            parent=self.styles['Heading1'],
+            fontSize=14,
+            spaceBefore=12,
+            spaceAfter=6,
+            textColor=colors.HexColor('#1f4e79'),
+            alignment=TA_LEFT
+        ))
         
         # Highlight style
-        if 'FAO Highlight' not in [style.name for style in styles]:
-            highlight_style = styles.add_style('FAO Highlight', WD_STYLE_TYPE.PARAGRAPH)
-            highlight_font = highlight_style.font
-            highlight_font.name = 'Calibri'
-            highlight_font.size = Pt(11)
-            highlight_style.paragraph_format.left_indent = Inches(0.25)
-            highlight_style.paragraph_format.space_after = Pt(6)
+        self.styles.add(ParagraphStyle(
+            name='Highlight',
+            parent=self.styles['Normal'],
+            fontSize=11,
+            leftIndent=20,
+            spaceBefore=6,
+            spaceAfter=6,
+            textColor=colors.HexColor('#2c5aa0')
+        ))
+        
+        # Caption style
+        self.styles.add(ParagraphStyle(
+            name='Caption',
+            parent=self.styles['Normal'],
+            fontSize=9,
+            spaceBefore=6,
+            spaceAfter=12,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor('#666666')
+        ))
+        
+        # Source style
+        self.styles.add(ParagraphStyle(
+            name='Source',
+            parent=self.styles['Normal'],
+            fontSize=8,
+            spaceAfter=12,
+            textColor=colors.HexColor('#888888')
+        ))
     
-    def _add_word_title_page(
-        self,
-        doc: Document,
-        analysis_results: AnalysisResults,
-        title: Optional[str],
-        author: str
-    ):
-        """Add title page to Word document."""
-        # Title
-        if title:
-            brief_title = title
-        else:
-            brief_title = f"FAOSTAT {analysis_results.dataset_name} Analytical Brief"
+    def export_pdf(self, brief_results: Dict[str, Any]) -> str:
+        """
+        Export brief as PDF document.
         
-        title_para = doc.add_paragraph(brief_title, style='FAO Title')
-        
-        # Subtitle with date range
-        if 'year_range' in analysis_results.summary_stats:
-            year_range = analysis_results.summary_stats['year_range']
-            subtitle = f"Analysis of data from {year_range[0]} to {year_range[1]}"
-            subtitle_para = doc.add_paragraph(subtitle)
-            subtitle_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
-        # Add spacing
-        doc.add_paragraph()
-        doc.add_paragraph()
-        
-        # Key statistics
-        if analysis_results.summary_stats:
-            stats_para = doc.add_paragraph()
-            stats_para.add_run("Key Dataset Information:").bold = True
+        Args:
+            brief_results: Generated brief results
             
-            if 'row_count' in analysis_results.summary_stats:
-                doc.add_paragraph(f"• Total Records: {analysis_results.summary_stats['row_count']:,}")
-            
-            if 'area_count' in analysis_results.summary_stats:
-                doc.add_paragraph(f"• Countries/Territories: {analysis_results.summary_stats['area_count']}")
-            
-            if 'item_count' in analysis_results.summary_stats:
-                doc.add_paragraph(f"• Items Covered: {analysis_results.summary_stats['item_count']}")
+        Returns:
+            Path to generated PDF file
+        """
+        if not REPORTLAB_AVAILABLE:
+            raise ImportError("ReportLab is required for PDF export")
         
-        # Add page break
-        doc.add_page_break()
-    
-    def _add_word_highlights(self, doc: Document, insights: Dict[str, Any]):
-        """Add highlights section to Word document."""
-        doc.add_paragraph("HIGHLIGHTS", style='FAO Heading 1')
+        # Generate filename
+        dataset_name = brief_results['dataset_name'].replace(' ', '_').replace('/', '_')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"analytical_brief_{dataset_name}_{timestamp}.pdf"
+        filepath = self.output_dir / filename
         
-        highlights = insights.get('highlights', [])
-        for highlight in highlights:
-            para = doc.add_paragraph(f"• {highlight}", style='FAO Highlight')
-    
-    def _add_word_background(
-        self,
-        doc: Document,
-        insights: Dict[str, Any],
-        analysis_results: AnalysisResults
-    ):
-        """Add background section to Word document."""
-        doc.add_paragraph("BACKGROUND", style='FAO Heading 1')
-        
-        background_text = insights.get('background', '')
-        if background_text:
-            doc.add_paragraph(background_text)
-        
-        # Add dataset information
-        dataset_info = (
-            f"This brief analyzes data from the FAOSTAT {analysis_results.dataset_name} dataset, "
-            f"covering {analysis_results.summary_stats.get('row_count', 'N/A')} records across "
-            f"{analysis_results.summary_stats.get('area_count', 'N/A')} countries and territories."
+        # Create PDF document
+        doc = SimpleDocTemplate(
+            str(filepath),
+            pagesize=A4,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=18
         )
-        doc.add_paragraph(dataset_info)
-    
-    def _add_word_global_trends(
-        self,
-        doc: Document,
-        insights: Dict[str, Any],
-        analysis_results: AnalysisResults
-    ):
-        """Add global trends section to Word document."""
-        doc.add_paragraph("GLOBAL TRENDS", style='FAO Heading 1')
         
+        # Build document content
+        story = []
+        
+        # Title page
+        story.extend(self._build_title_section(brief_results))
+        
+        # Highlights
+        story.extend(self._build_highlights_section(brief_results))
+        
+        # Global trends
+        story.extend(self._build_global_trends_section(brief_results))
+        
+        # Regional analysis
+        story.extend(self._build_regional_analysis_section(brief_results))
+        
+        # Country insights
+        story.extend(self._build_country_insights_section(brief_results))
+        
+        # Figures
+        story.extend(self._build_figures_section(brief_results))
+        
+        # Explanatory notes
+        story.extend(self._build_explanatory_notes_section(brief_results))
+        
+        # Build PDF
+        doc.build(story)
+        
+        logger.info(f"PDF exported to {filepath}")
+        return str(filepath)
+    
+    def _build_title_section(self, brief_results: Dict[str, Any]) -> List:
+        """Build title section for PDF."""
+        story = []
+        
+        # Main title
+        title = f"FAOSTAT ANALYTICAL BRIEF\n{brief_results['dataset_name']}"
+        story.append(Paragraph(title, self.styles['CustomTitle']))
+        story.append(Spacer(1, 0.3*inch))
+        
+        # Period
+        config = brief_results.get('config', {})
+        year_range = config.get('year_range')
+        if year_range:
+            period = f"{year_range[0]}–{year_range[1]}"
+            story.append(Paragraph(period, self.styles['CustomHeading']))
+        
+        story.append(Spacer(1, 0.5*inch))
+        
+        return story
+    
+    def _build_highlights_section(self, brief_results: Dict[str, Any]) -> List:
+        """Build highlights section for PDF."""
+        story = []
+        
+        insights = brief_results.get('insights', {})
+        highlights = insights.get('highlights', '')
+        
+        if highlights:
+            story.append(Paragraph("HIGHLIGHTS", self.styles['CustomHeading']))
+            
+            # Convert bullet points to proper format
+            highlight_lines = highlights.split('\n')
+            for line in highlight_lines:
+                if line.strip():
+                    # Remove existing bullet markers and add consistent ones
+                    clean_line = line.strip().lstrip('→•-').strip()
+                    if clean_line:
+                        story.append(Paragraph(f"→ {clean_line}", self.styles['Highlight']))
+            
+            story.append(Spacer(1, 0.3*inch))
+        
+        return story
+    
+    def _build_global_trends_section(self, brief_results: Dict[str, Any]) -> List:
+        """Build global trends section for PDF."""
+        story = []
+        
+        insights = brief_results.get('insights', {})
         global_trends = insights.get('global_trends', '')
+        
         if global_trends:
-            doc.add_paragraph(global_trends)
+            story.append(Paragraph("GLOBAL TRENDS", self.styles['CustomHeading']))
+            story.append(Paragraph(global_trends, self.styles['Normal']))
+            story.append(Spacer(1, 0.2*inch))
         
-        # Add time series information if available
-        if 'time_series' in analysis_results.summary_stats:
-            ts_info = analysis_results.summary_stats['time_series']
-            trend_text = (
-                f"The data shows a {ts_info.get('direction', 'change')} from "
-                f"{ts_info.get('first_year', 'start')} to {ts_info.get('last_year', 'end')}, "
-                f"with a total change of {ts_info.get('percent_change', 0):.1f}%."
-            )
-            doc.add_paragraph(trend_text)
+        return story
     
-    def _add_word_regional_analysis(
-        self,
-        doc: Document,
-        insights: Dict[str, Any],
-        analysis_results: AnalysisResults
-    ):
-        """Add regional analysis section to Word document."""
-        doc.add_paragraph("REGIONAL ANALYSIS", style='FAO Heading 1')
+    def _build_regional_analysis_section(self, brief_results: Dict[str, Any]) -> List:
+        """Build regional analysis section for PDF."""
+        story = []
         
+        insights = brief_results.get('insights', {})
         regional_analysis = insights.get('regional_analysis', '')
+        
         if regional_analysis:
-            doc.add_paragraph(regional_analysis)
+            story.append(Paragraph("REGIONAL ANALYSIS", self.styles['CustomHeading']))
+            story.append(Paragraph(regional_analysis, self.styles['Normal']))
+            story.append(Spacer(1, 0.2*inch))
         
-        # Add top regions information if available
-        if 'top_areas' in analysis_results.summary_stats:
-            top_areas = analysis_results.summary_stats['top_areas']
-            if top_areas:
-                areas_text = "The leading countries/regions by volume are: " + \
-                           ", ".join(list(top_areas.keys())[:5])
-                doc.add_paragraph(areas_text)
+        return story
     
-    def _add_word_figures(self, doc: Document, figures: List[VisualizationInfo]):
-        """Add figures section to Word document."""
-        if not figures:
-            return
+    def _build_country_insights_section(self, brief_results: Dict[str, Any]) -> List:
+        """Build country insights section for PDF."""
+        story = []
         
-        doc.add_paragraph("FIGURES", style='FAO Heading 1')
+        insights = brief_results.get('insights', {})
+        country_insights = insights.get('country_insights', '')
         
-        for i, figure in enumerate(figures, 1):
-            if os.path.exists(figure.filepath):
-                try:
-                    # Add figure
-                    para = doc.add_paragraph()
-                    run = para.runs[0] if para.runs else para.add_run()
-                    run.add_picture(figure.filepath, width=Inches(6))
-                    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    
-                    # Add caption
-                    caption_para = doc.add_paragraph(f"Figure {i}. {figure.title}")
-                    caption_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    caption_para.runs[0].bold = True
-                    
-                    # Add description
-                    if figure.description:
-                        doc.add_paragraph(figure.description)
-                    
-                    # Add source
-                    source_text = (
-                        f"Source: FAO. FAOSTAT. Rome. {datetime.now().strftime('%Y')}. "
-                        "http://www.fao.org/faostat"
-                    )
-                    source_para = doc.add_paragraph(source_text)
-                    source_para.runs[0].italic = True
-                    source_para.runs[0].font.size = Pt(9)
-                    
-                    doc.add_paragraph()  # Add spacing
-                    
-                except Exception as e:
-                    logger.warning(f"Could not include figure {figure.filepath}: {str(e)}")
+        if country_insights:
+            story.append(Paragraph("COUNTRY ANALYSIS", self.styles['CustomHeading']))
+            story.append(Paragraph(country_insights, self.styles['Normal']))
+            story.append(Spacer(1, 0.2*inch))
+        
+        return story
     
-    def _add_word_explanatory_notes(self, doc: Document, insights: Dict[str, Any]):
-        """Add explanatory notes section to Word document."""
-        doc.add_paragraph("EXPLANATORY NOTES", style='FAO Heading 1')
+    def _build_figures_section(self, brief_results: Dict[str, Any]) -> List:
+        """Build figures section for PDF."""
+        story = []
         
+        figures = brief_results.get('figures', [])
+        
+        if figures:
+            story.append(Paragraph("FIGURES", self.styles['CustomHeading']))
+            
+            for i, figure in enumerate(figures, 1):
+                if os.path.exists(figure['filepath']):
+                    try:
+                        # Add figure
+                        img = Image(figure['filepath'], width=6*inch, height=4*inch)
+                        story.append(img)
+                        
+                        # Add caption
+                        caption = f"Figure {i}. {figure['title']}"
+                        story.append(Paragraph(caption, self.styles['Caption']))
+                        
+                        # Add description
+                        if figure.get('description'):
+                            story.append(Paragraph(figure['description'], self.styles['Normal']))
+                        
+                        # Add source
+                        source_text = "Source: FAO. FAOSTAT. Rome. " + \
+                                    datetime.now().strftime('%Y') + \
+                                    ". http://www.fao.org/faostat"
+                        story.append(Paragraph(source_text, self.styles['Source']))
+                        
+                        story.append(Spacer(1, 0.3*inch))
+                        
+                    except Exception as e:
+                        logger.warning(f"Could not include figure {figure['filepath']}: {str(e)}")
+                        # Add placeholder
+                        story.append(Paragraph(f"[Figure {i}: {figure['title']} - Image not available]", self.styles['Caption']))
+                        story.append(Spacer(1, 0.2*inch))
+        
+        return story
+    
+    def _build_explanatory_notes_section(self, brief_results: Dict[str, Any]) -> List:
+        """Build explanatory notes section for PDF."""
+        story = []
+        
+        insights = brief_results.get('insights', {})
         explanatory_notes = insights.get('explanatory_notes', '')
+        
         if explanatory_notes:
-            doc.add_paragraph(explanatory_notes)
+            story.append(Paragraph("EXPLANATORY NOTES", self.styles['CustomHeading']))
+            story.append(Paragraph(explanatory_notes, self.styles['Normal']))
         
-        # Add standard data source note
-        data_note = (
-            "Data sources: The main data source for this analysis is the FAOSTAT database "
-            "maintained by the Food and Agriculture Organization of the United Nations (FAO). "
-            "Data are updated annually and may be subject to revision as new information becomes available."
-        )
-        doc.add_paragraph(data_note)
+        return story
     
-    def get_available_formats(self) -> List[str]:
-        """Get list of available document formats."""
-        formats = []
+    def export_word(self, brief_results: Dict[str, Any]) -> str:
+        """
+        Export brief as Word document.
         
-        if self.pdf_service.is_available():
-            formats.append("pdf")
+        Args:
+            brief_results: Generated brief results
+            
+        Returns:
+            Path to generated Word file
+        """
+        if not DOCX_AVAILABLE:
+            raise ImportError("python-docx is required for Word export")
         
-        if PYTHON_DOCX_AVAILABLE:
-            formats.append("docx")
+        # Generate filename
+        dataset_name = brief_results['dataset_name'].replace(' ', '_').replace('/', '_')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"analytical_brief_{dataset_name}_{timestamp}.docx"
+        filepath = self.output_dir / filename
         
-        return formats
+        # Create Word document
+        doc = Document()
+        
+        # Title
+        title = doc.add_heading(f"FAOSTAT ANALYTICAL BRIEF\n{brief_results['dataset_name']}", 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Period
+        config = brief_results.get('config', {})
+        year_range = config.get('year_range')
+        if year_range:
+            period = doc.add_heading(f"{year_range[0]}–{year_range[1]}", level=1)
+            period.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Content sections
+        insights = brief_results.get('insights', {})
+        
+        # Highlights
+        if insights.get('highlights'):
+            doc.add_heading('HIGHLIGHTS', level=1)
+            highlight_lines = insights['highlights'].split('\n')
+            for line in highlight_lines:
+                if line.strip():
+                    clean_line = line.strip().lstrip('→•-').strip()
+                    if clean_line:
+                        p = doc.add_paragraph()
+                        p.add_run(f"→ {clean_line}")
+        
+        # Global trends
+        if insights.get('global_trends'):
+            doc.add_heading('GLOBAL TRENDS', level=1)
+            doc.add_paragraph(insights['global_trends'])
+        
+        # Regional analysis
+        if insights.get('regional_analysis'):
+            doc.add_heading('REGIONAL ANALYSIS', level=1)
+            doc.add_paragraph(insights['regional_analysis'])
+        
+        # Country insights
+        if insights.get('country_insights'):
+            doc.add_heading('COUNTRY ANALYSIS', level=1)
+            doc.add_paragraph(insights['country_insights'])
+        
+        # Figures
+        figures = brief_results.get('figures', [])
+        if figures:
+            doc.add_heading('FIGURES', level=1)
+            
+            for i, figure in enumerate(figures, 1):
+                if os.path.exists(figure['filepath']):
+                    try:
+                        doc.add_picture(figure['filepath'], width=Inches(6))
+                        caption = doc.add_paragraph(f"Figure {i}. {figure['title']}")
+                        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        
+                        if figure.get('description'):
+                            doc.add_paragraph(figure['description'])
+                        
+                        source_text = "Source: FAO. FAOSTAT. Rome. " + \
+                                    datetime.now().strftime('%Y') + \
+                                    ". http://www.fao.org/faostat"
+                        source_p = doc.add_paragraph(source_text)
+                        source_p.runs[0].font.size = docx.shared.Pt(8)
+                        
+                    except Exception as e:
+                        logger.warning(f"Could not include figure {figure['filepath']}: {str(e)}")
+                        doc.add_paragraph(f"[Figure {i}: {figure['title']} - Image not available]")
+        
+        # Explanatory notes
+        if insights.get('explanatory_notes'):
+            doc.add_heading('EXPLANATORY NOTES', level=1)
+            doc.add_paragraph(insights['explanatory_notes'])
+        
+        # Save document
+        doc.save(str(filepath))
+        
+        logger.info(f"Word document exported to {filepath}")
+        return str(filepath)
     
-    def is_format_available(self, format_type: str) -> bool:
-        """Check if a specific format is available."""
-        return format_type.lower() in self.get_available_formats()
+    def export_excel_data(self, brief_results: Dict[str, Any]) -> str:
+        """
+        Export figure data as Excel file with separate sheets.
+        
+        Args:
+            brief_results: Generated brief results
+            
+        Returns:
+            Path to generated Excel file
+        """
+        # Generate filename
+        dataset_name = brief_results['dataset_name'].replace(' ', '_').replace('/', '_')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"brief_data_{dataset_name}_{timestamp}.xlsx"
+        filepath = self.output_dir / filename
+        
+        # Create Excel writer
+        with pd.ExcelWriter(str(filepath), engine='openpyxl') as writer:
+            
+            # Summary sheet
+            summary_data = self._prepare_summary_sheet(brief_results)
+            summary_data.to_excel(writer, sheet_name='Summary', index=False)
+            
+            # Figure data sheets
+            figures = brief_results.get('figures', [])
+            config = brief_results.get('config', {})
+            
+            for i, figure in enumerate(figures, 1):
+                sheet_name = f"fig{i}_data"
+                figure_data = self._prepare_figure_data(figure, brief_results, config)
+                
+                if not figure_data.empty:
+                    figure_data.to_excel(writer, sheet_name=sheet_name, index=False)
+            
+            # Raw filtered data sheet
+            filtered_data = brief_results.get('filtered_data')
+            if filtered_data is not None and not filtered_data.empty:
+                # Limit to reasonable size for Excel
+                if len(filtered_data) > 50000:
+                    sample_data = filtered_data.sample(n=50000)
+                else:
+                    sample_data = filtered_data
+                
+                sample_data.to_excel(writer, sheet_name='Raw_Data', index=False)
+        
+        logger.info(f"Excel data exported to {filepath}")
+        return str(filepath)
+    
+    def _prepare_summary_sheet(self, brief_results: Dict[str, Any]) -> pd.DataFrame:
+        """Prepare summary information sheet."""
+        
+        config = brief_results.get('config', {})
+        summary_stats = brief_results.get('summary_stats', {})
+        
+        summary_info = [
+            ['Dataset', brief_results.get('dataset_name', '')],
+            ['Dataset Code', brief_results.get('dataset_code', '')],
+            ['Generated At', brief_results.get('generated_at', '')],
+            ['Time Period', f"{config.get('year_range', ['N/A', 'N/A'])[0]} - {config.get('year_range', ['N/A', 'N/A'])[1]}"],
+            ['Geographic Scope', config.get('geo_scope', '')],
+            ['Selected Items', ', '.join(config.get('selected_items', []))],
+            ['Selected Elements', ', '.join(config.get('selected_elements', []))],
+            ['Selected Areas', ', '.join(config.get('selected_areas', [])[:10])],  # Limit display
+            ['Total Records', summary_stats.get('total_records', 0)],
+            ['Areas Covered', summary_stats.get('num_areas', 0)],
+            ['Items Covered', summary_stats.get('num_items', 0)],
+            ['Elements Covered', summary_stats.get('num_elements', 0)]
+        ]
+        
+        return pd.DataFrame(summary_info, columns=['Attribute', 'Value'])
+    
+    def _prepare_figure_data(self, figure: Dict[str, Any], brief_results: Dict[str, Any], config: Dict[str, Any]) -> pd.DataFrame:
+        """Prepare data for a specific figure."""
+        
+        df = brief_results.get('filtered_data')
+        
+        if df is None or df.empty:
+            return pd.DataFrame()
+        
+        figure_type = figure.get('type', '')
+        
+        try:
+            if figure_type == 'trends':
+                return self._prepare_trends_figure_data(df, config)
+            elif figure_type == 'rankings':
+                return self._prepare_rankings_figure_data(df, config)
+            elif figure_type == 'composition':
+                return self._prepare_composition_figure_data(df, config)
+            else:
+                # Return a sample of the filtered data
+                return df.head(1000)  # Limit size
+                
+        except Exception as e:
+            logger.error(f"Error preparing figure data: {str(e)}")
+            return pd.DataFrame()
+    
+    def _prepare_trends_figure_data(self, df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+        """Prepare data for trends figure."""
+        
+        if 'Year' not in df.columns or 'Value' not in df.columns:
+            return df.head(1000)
+        
+        # Group by year and sum values
+        if 'Item' in df.columns and len(df['Item'].unique()) > 1:
+            trends_data = df.groupby(['Year', 'Item'])['Value'].sum().reset_index()
+        elif 'Element' in df.columns and len(df['Element'].unique()) > 1:
+            trends_data = df.groupby(['Year', 'Element'])['Value'].sum().reset_index()
+        else:
+            trends_data = df.groupby('Year')['Value'].sum().reset_index()
+        
+        return trends_data
+    
+    def _prepare_rankings_figure_data(self, df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+        """Prepare data for rankings figure."""
+        
+        if 'Area' not in df.columns or 'Value' not in df.columns:
+            return df.head(1000)
+        
+        # Get latest year data for rankings
+        if 'Year' in df.columns:
+            latest_year = df['Year'].max()
+            rankings_data = df[df['Year'] == latest_year]
+        else:
+            rankings_data = df
+        
+        # Group by area and sum values
+        area_totals = rankings_data.groupby('Area')['Value'].sum().sort_values(ascending=False)
+        
+        # Take top 20 for data export
+        top_areas = area_totals.head(20).reset_index()
+        top_areas['Rank'] = range(1, len(top_areas) + 1)
+        
+        return top_areas
+    
+    def _prepare_composition_figure_data(self, df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+        """Prepare data for composition figure."""
+        
+        if 'Value' not in df.columns:
+            return df.head(1000)
+        
+        # Use items if available, otherwise elements
+        if 'Item' in df.columns and len(df['Item'].unique()) > 1:
+            composition_data = df.groupby('Item')['Value'].sum().sort_values(ascending=False)
+            composition_df = composition_data.reset_index()
+            composition_df['Percentage'] = (composition_df['Value'] / composition_df['Value'].sum() * 100).round(2)
+        elif 'Element' in df.columns and len(df['Element'].unique()) > 1:
+            composition_data = df.groupby('Element')['Value'].sum().sort_values(ascending=False)
+            composition_df = composition_data.reset_index()
+            composition_df['Percentage'] = (composition_df['Value'] / composition_df['Value'].sum() * 100).round(2)
+        else:
+            return df.head(1000)
+        
+        return composition_df

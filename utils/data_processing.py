@@ -1,22 +1,21 @@
 """
-Data processing utilities for FAOSTAT Analytics Application.
-
-This module provides functions for cleaning, transforming, and analyzing
-FAOSTAT data. These utilities support the FAOSTAT service but are separated
-to maintain clean separation of concerns.
+Focus on essential functions needed for analytical brief generation:
+- Basic data cleaning
+- Top/bottom performer identification  
+- Growth rate calculations
+- Simple aggregations
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Any, Union
+from typing import Dict, List, Tuple, Optional
 import logging
 
-# Set up logger
 logger = logging.getLogger(__name__)
 
 def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Perform comprehensive cleaning on a FAOSTAT dataset.
+    Perform basic cleaning on a FAOSTAT dataset.
     
     Args:
         df: Raw dataset DataFrame
@@ -30,13 +29,13 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     # Make a copy to avoid modifying the original
     df = df.copy()
     
-    # Handle column names - strip whitespace and standardize
+    # Handle column names - strip whitespace
     df.columns = [col.strip() for col in df.columns]
     
-    # Convert common columns to appropriate types
+    # Convert common FAOSTAT columns to appropriate types
     type_conversions = {
         'Year': 'int64',
-        'Area Code': 'int64',
+        'Area Code': 'int64', 
         'Item Code': 'int64',
         'Element Code': 'int64',
         'Value': 'float64'
@@ -45,13 +44,18 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     for col, dtype in type_conversions.items():
         if col in df.columns:
             try:
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype(dtype)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                if dtype == 'int64':
+                    # Handle NaN in integer columns by converting to nullable int
+                    df[col] = df[col].astype('Int64')
+                else:
+                    df[col] = df[col].astype(dtype)
             except Exception as e:
                 logger.warning(f"Could not convert column {col} to {dtype}: {str(e)}")
     
-    # Fill NaN values in numeric columns with appropriate values
-    numeric_cols = df.select_dtypes(include=['number']).columns
-    df[numeric_cols] = df[numeric_cols].fillna(0)
+    # Fill NaN values in Value column with 0 (common for FAOSTAT)
+    if 'Value' in df.columns:
+        df['Value'] = df['Value'].fillna(0)
     
     # Fill NaN values in string columns with empty string
     string_cols = df.select_dtypes(include=['object']).columns
@@ -65,203 +69,7 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-def detect_anomalies(df: pd.DataFrame, column: str = 'Value', threshold: float = 3.0) -> pd.DataFrame:
-    """
-    Detect anomalous values in a dataset using Z-score.
-    
-    Args:
-        df: Dataset DataFrame
-        column: Column to check for anomalies
-        threshold: Z-score threshold for anomaly detection
-        
-    Returns:
-        DataFrame with anomalies flagged
-    """
-    if df is None or df.empty or column not in df.columns:
-        return pd.DataFrame()
-    
-    # Make a copy
-    result = df.copy()
-    
-    # Calculate Z-scores
-    mean = result[column].mean()
-    std = result[column].std()
-    
-    if std == 0:  # Avoid division by zero
-        result['z_score'] = 0
-    else:
-        result['z_score'] = (result[column] - mean) / std
-    
-    # Flag anomalies
-    result['is_anomaly'] = abs(result['z_score']) > threshold
-    
-    return result
-
-def aggregate_by_dimensions(
-    df: pd.DataFrame, 
-    dimensions: List[str], 
-    value_column: str = 'Value',
-    aggregation: str = 'sum'
-) -> pd.DataFrame:
-    """
-    Aggregate data by specified dimensions.
-    
-    Args:
-        df: Dataset DataFrame
-        dimensions: List of columns to group by
-        value_column: Column to aggregate
-        aggregation: Aggregation function ('sum', 'mean', 'median', 'min', 'max')
-        
-    Returns:
-        Aggregated DataFrame
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-    
-    # Validate dimensions
-    valid_dimensions = [dim for dim in dimensions if dim in df.columns]
-    if not valid_dimensions:
-        logger.warning("No valid dimensions for aggregation")
-        return df
-    
-    # Validate value column
-    if value_column not in df.columns:
-        logger.warning(f"Value column {value_column} not found in dataset")
-        return df
-    
-    # Select aggregation function
-    agg_funcs = {
-        'sum': np.sum,
-        'mean': np.mean,
-        'median': np.median,
-        'min': np.min,
-        'max': np.max
-    }
-    
-    agg_func = agg_funcs.get(aggregation.lower(), np.sum)
-    
-    # Perform aggregation
-    try:
-        result = df.groupby(valid_dimensions)[value_column].agg(agg_func).reset_index()
-        return result
-    except Exception as e:
-        logger.error(f"Error during aggregation: {str(e)}")
-        return df
-
-def calculate_growth_rates(
-    df: pd.DataFrame, 
-    time_column: str = 'Year', 
-    value_column: str = 'Value',
-    dimensions: Optional[List[str]] = None
-) -> pd.DataFrame:
-    """
-    Calculate year-over-year growth rates.
-    
-    Args:
-        df: Dataset DataFrame
-        time_column: Column containing time periods
-        value_column: Column containing values
-        dimensions: Optional list of columns to group by
-        
-    Returns:
-        DataFrame with growth rates
-    """
-    if df is None or df.empty or time_column not in df.columns or value_column not in df.columns:
-        return pd.DataFrame()
-    
-    # Make a copy
-    result = df.copy()
-    
-    # Sort by time column
-    result = result.sort_values(time_column)
-    
-    if dimensions:
-        # Calculate growth rates within each group
-        valid_dimensions = [dim for dim in dimensions if dim in df.columns]
-        
-        if valid_dimensions:
-            # Group by dimensions and calculate growth rate
-            result = result.copy()
-            
-            # Define a function to calculate growth for each group
-            def calculate_group_growth(group):
-                group = group.sort_values(time_column)
-                group['previous_value'] = group[value_column].shift(1)
-                group['growth_rate'] = ((group[value_column] / group['previous_value']) - 1) * 100
-                return group
-            
-            # Apply the function to each group
-            result = result.groupby(valid_dimensions).apply(calculate_group_growth).reset_index(drop=True)
-    else:
-        # Calculate overall growth rate
-        result['previous_value'] = result[value_column].shift(1)
-        result['growth_rate'] = ((result[value_column] / result['previous_value']) - 1) * 100
-    
-    return result
-
-def calculate_compound_annual_growth_rate(
-    df: pd.DataFrame,
-    time_column: str = 'Year',
-    value_column: str = 'Value',
-    dimensions: Optional[List[str]] = None
-) -> pd.DataFrame:
-    """
-    Calculate compound annual growth rate (CAGR).
-    
-    Args:
-        df: Dataset DataFrame
-        time_column: Column containing time periods
-        value_column: Column containing values
-        dimensions: Optional list of columns to group by
-        
-    Returns:
-        DataFrame with CAGR calculated
-    """
-    if df is None or df.empty or time_column not in df.columns or value_column not in df.columns:
-        return pd.DataFrame()
-    
-    # Make a copy
-    df = df.copy()
-    
-    # Define CAGR calculation function
-    def calculate_cagr(group):
-        group = group.sort_values(time_column)
-        first_year = group[time_column].iloc[0]
-        last_year = group[time_column].iloc[-1]
-        first_value = group[value_column].iloc[0]
-        last_value = group[value_column].iloc[-1]
-        
-        # Calculate years difference
-        years_diff = last_year - first_year
-        
-        # Calculate CAGR
-        if years_diff > 0 and first_value > 0 and last_value > 0:
-            cagr = (((last_value / first_value) ** (1 / years_diff)) - 1) * 100
-        else:
-            cagr = None
-        
-        return pd.Series({
-            'first_year': first_year,
-            'last_year': last_year,
-            'first_value': first_value,
-            'last_value': last_value,
-            'years_diff': years_diff,
-            'cagr': cagr
-        })
-    
-    if dimensions:
-        # Calculate CAGR for each group
-        valid_dimensions = [dim for dim in dimensions if dim in df.columns]
-        
-        if valid_dimensions:
-            result = df.groupby(valid_dimensions).apply(calculate_cagr).reset_index()
-            return result
-    
-    # Calculate overall CAGR
-    overall_cagr = calculate_cagr(df)
-    return pd.DataFrame([overall_cagr])
-
-def identify_top_bottom_performers(
+def get_top_bottom_performers(
     df: pd.DataFrame,
     group_by: str,
     value_column: str = 'Value',
@@ -270,7 +78,8 @@ def identify_top_bottom_performers(
     year_filter: Optional[int] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Identify top and bottom performers in a dataset.
+    Identify top and bottom performing areas/items.
+    Perfect for your top/bottom N country selection.
     
     Args:
         df: Dataset DataFrame
@@ -294,143 +103,214 @@ def identify_top_bottom_performers(
     # Aggregate data by the grouping column
     aggregated = filtered_df.groupby(group_by)[value_column].sum().reset_index()
     
-    # Identify top performers
-    top_performers = aggregated.nlargest(top_n, value_column)
+    # Sort by value
+    aggregated = aggregated.sort_values(value_column, ascending=False)
     
-    # Identify bottom performers
-    bottom_performers = aggregated.nsmallest(bottom_n, value_column)
+    # Get top performers
+    top_performers = aggregated.head(top_n).copy()
+    top_performers['rank'] = range(1, len(top_performers) + 1)
+    
+    # Get bottom performers  
+    bottom_performers = aggregated.tail(bottom_n).copy()
+    bottom_performers = bottom_performers.sort_values(value_column, ascending=True)
+    bottom_performers['rank'] = range(1, len(bottom_performers) + 1)
     
     return top_performers, bottom_performers
 
-def normalize_time_series(
-    df: pd.DataFrame, 
-    time_column: str = 'Year', 
-    value_column: str = 'Value',
-    base_year: Optional[int] = None,
-    dimensions: Optional[List[str]] = None
+def calculate_year_over_year_change(
+    df: pd.DataFrame,
+    group_by: Optional[List[str]] = None,
+    time_column: str = 'Year',
+    value_column: str = 'Value'
 ) -> pd.DataFrame:
     """
-    Normalize time series data to a base year (index = 100).
+    Calculate year-over-year changes for analytical briefs.
     
     Args:
         df: Dataset DataFrame
+        group_by: Optional list of columns to group by (e.g., ['Area', 'Item'])
         time_column: Column containing time periods
         value_column: Column containing values
-        base_year: Year to use as base (100). If None, uses first year.
-        dimensions: Optional list of columns to group by
         
     Returns:
-        DataFrame with normalized values
+        DataFrame with year-over-year changes
     """
     if df is None or df.empty or time_column not in df.columns or value_column not in df.columns:
         return pd.DataFrame()
     
-    # Make a copy
-    result = df.copy()
+    # Make a copy and sort by time
+    result_df = df.copy()
     
-    # Define normalization function
-    def normalize_group(group):
-        group = group.sort_values(time_column)
+    if group_by and all(col in result_df.columns for col in group_by):
+        # Calculate changes within each group
+        def calc_group_changes(group):
+            group = group.sort_values(time_column)
+            group['previous_value'] = group[value_column].shift(1)
+            group['yoy_change'] = group[value_column] - group['previous_value']
+            group['yoy_change_pct'] = (group['yoy_change'] / group['previous_value'] * 100).replace([np.inf, -np.inf], np.nan)
+            return group
         
-        # Determine base year value
-        if base_year is not None and base_year in group[time_column].values:
-            base_value = group.loc[group[time_column] == base_year, value_column].iloc[0]
-        else:
-            # Use first year as base
-            base_value = group[value_column].iloc[0]
-        
-        # Avoid division by zero
-        if base_value == 0:
-            group['normalized_value'] = 0
-        else:
-            group['normalized_value'] = (group[value_column] / base_value) * 100
-        
-        return group
+        result_df = result_df.groupby(group_by).apply(calc_group_changes).reset_index(drop=True)
+    else:
+        # Calculate changes for entire dataset
+        result_df = result_df.sort_values(time_column)
+        result_df['previous_value'] = result_df[value_column].shift(1)
+        result_df['yoy_change'] = result_df[value_column] - result_df['previous_value']
+        result_df['yoy_change_pct'] = (result_df['yoy_change'] / result_df['previous_value'] * 100).replace([np.inf, -np.inf], np.nan)
     
-    if dimensions:
-        # Normalize within each group
-        valid_dimensions = [dim for dim in dimensions if dim in df.columns]
-        
-        if valid_dimensions:
-            result = result.groupby(valid_dimensions).apply(normalize_group).reset_index(drop=True)
-            return result
-    
-    # Normalize overall
-    result = normalize_group(result)
-    return result
+    return result_df
 
-def calculate_correlations(
-    df: pd.DataFrame,
-    dimensions: Optional[List[str]] = None,
-    variables: Optional[List[str]] = None
+def aggregate_by_dimensions(
+    df: pd.DataFrame, 
+    dimensions: List[str], 
+    value_column: str = 'Value',
+    aggregation: str = 'sum'
 ) -> pd.DataFrame:
     """
-    Calculate correlations between variables.
+    Simple aggregation for analytical brief summaries.
     
     Args:
         df: Dataset DataFrame
-        dimensions: Optional columns to group by before calculating correlations
-        variables: List of columns to calculate correlations for
+        dimensions: List of columns to group by
+        value_column: Column to aggregate
+        aggregation: Aggregation function ('sum', 'mean', 'count')
         
     Returns:
-        DataFrame with correlation results
+        Aggregated DataFrame
     """
     if df is None or df.empty:
         return pd.DataFrame()
     
-    # Determine variables to use
-    if variables:
-        valid_variables = [var for var in variables if var in df.columns]
-    else:
-        valid_variables = df.select_dtypes(include=['number']).columns.tolist()
+    # Validate dimensions
+    valid_dimensions = [dim for dim in dimensions if dim in df.columns]
+    if not valid_dimensions:
+        logger.warning("No valid dimensions for aggregation")
+        return df
     
-    if len(valid_variables) < 2:
-        logger.warning("Need at least two numeric variables to calculate correlations")
+    # Validate value column
+    if value_column not in df.columns:
+        logger.warning(f"Value column {value_column} not found in dataset")
+        return df
+    
+    try:
+        if aggregation == 'sum':
+            result = df.groupby(valid_dimensions)[value_column].sum().reset_index()
+        elif aggregation == 'mean':
+            result = df.groupby(valid_dimensions)[value_column].mean().reset_index()
+        elif aggregation == 'count':
+            result = df.groupby(valid_dimensions)[value_column].count().reset_index()
+        else:
+            result = df.groupby(valid_dimensions)[value_column].sum().reset_index()
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error during aggregation: {str(e)}")
+        return df
+
+def get_latest_year_data(df: pd.DataFrame, time_column: str = 'Year') -> pd.DataFrame:
+    """
+    Get data for the latest available year.
+    Useful for current state analysis in briefs.
+    
+    Args:
+        df: Dataset DataFrame
+        time_column: Column containing time periods
+        
+    Returns:
+        DataFrame with latest year data only
+    """
+    if df is None or df.empty or time_column not in df.columns:
+        return df
+    
+    latest_year = df[time_column].max()
+    return df[df[time_column] == latest_year].copy()
+
+def calculate_regional_totals(
+    df: pd.DataFrame,
+    geography_service,
+    value_column: str = 'Value',
+    latest_year_only: bool = True
+) -> Dict[str, pd.DataFrame]:
+    """
+    Calculate totals by geographic classification for analytical briefs.
+    
+    Args:
+        df: Dataset DataFrame
+        geography_service: GeographyService instance
+        value_column: Column to sum
+        latest_year_only: If True, use only latest year data
+        
+    Returns:
+        Dictionary with 'main_regions', 'other_regions', 'countries' DataFrames
+    """
+    if df is None or df.empty or 'Area' not in df.columns:
+        return {'main_regions': pd.DataFrame(), 'other_regions': pd.DataFrame(), 'countries': pd.DataFrame()}
+    
+    # Use latest year data if requested
+    if latest_year_only and 'Year' in df.columns:
+        analysis_df = get_latest_year_data(df)
+    else:
+        analysis_df = df.copy()
+    
+    # Get geographic classifications
+    classification = geography_service.get_area_classification()
+    
+    results = {}
+    
+    for geo_type in ['main_regions', 'other_regions', 'countries']:
+        areas = classification.get(geo_type, [])
+        geo_data = analysis_df[analysis_df['Area'].isin(areas)]
+        
+        if not geo_data.empty:
+            # Sum by area
+            totals = geo_data.groupby('Area')[value_column].sum().sort_values(ascending=False).reset_index()
+            totals['rank'] = range(1, len(totals) + 1)
+            results[geo_type] = totals
+        else:
+            results[geo_type] = pd.DataFrame()
+    
+    return results
+
+def filter_for_brief_analysis(
+    df: pd.DataFrame,
+    items: Optional[List[str]] = None,
+    elements: Optional[List[str]] = None,
+    areas: Optional[List[str]] = None,
+    year_range: Optional[Tuple[int, int]] = None
+) -> pd.DataFrame:
+    """
+    Apply filters for analytical brief generation.
+    
+    Args:
+        df: Dataset DataFrame
+        items: List of items to include
+        elements: List of elements to include  
+        areas: List of areas to include
+        year_range: Tuple of (start_year, end_year)
+        
+    Returns:
+        Filtered DataFrame
+    """
+    if df is None or df.empty:
         return pd.DataFrame()
     
-    if dimensions:
-        # Calculate correlations within each group
-        valid_dimensions = [dim for dim in dimensions if dim in df.columns]
-        
-        if valid_dimensions:
-            results = []
-            
-            for name, group in df.groupby(valid_dimensions):
-                # Create single dimension names or handle multiple dimensions
-                if isinstance(name, tuple):
-                    dim_values = {dim: val for dim, val in zip(valid_dimensions, name)}
-                else:
-                    dim_values = {valid_dimensions[0]: name}
-                
-                # Calculate correlation matrix
-                corr_matrix = group[valid_variables].corr()
-                
-                # Extract unique correlations
-                for i, var1 in enumerate(valid_variables):
-                    for j, var2 in enumerate(valid_variables):
-                        if i < j:  # Upper triangle only
-                            result = {
-                                'variable1': var1,
-                                'variable2': var2,
-                                'correlation': corr_matrix.loc[var1, var2]
-                            }
-                            result.update(dim_values)
-                            results.append(result)
-            
-            return pd.DataFrame(results)
+    filtered_df = df.copy()
     
-    # Calculate overall correlations
-    corr_matrix = df[valid_variables].corr()
+    # Apply filters
+    if items and 'Item' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Item'].isin(items)]
     
-    # Extract unique correlations
-    results = []
-    for i, var1 in enumerate(valid_variables):
-        for j, var2 in enumerate(valid_variables):
-            if i < j:  # Upper triangle only
-                results.append({
-                    'variable1': var1,
-                    'variable2': var2,
-                    'correlation': corr_matrix.loc[var1, var2]
-                })
+    if elements and 'Element' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Element'].isin(elements)]
     
-    return pd.DataFrame(results)
+    if areas and 'Area' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Area'].isin(areas)]
+    
+    if year_range and 'Year' in filtered_df.columns:
+        start_year, end_year = year_range
+        filtered_df = filtered_df[
+            (filtered_df['Year'] >= start_year) & 
+            (filtered_df['Year'] <= end_year)
+        ]
+    
+    return filtered_df
